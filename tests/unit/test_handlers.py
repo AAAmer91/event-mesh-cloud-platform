@@ -187,3 +187,18 @@ def test_logger_and_metrics(mocked_aws):
     metrics = CloudWatchMetrics()
     result = metrics.put_metric("TestMetric", 1.0)
     assert result is True
+
+
+@pytest.mark.unit
+def test_trace_context():
+    """Test distributed trace context creation and SNS attribute injection."""
+    from src.core.tracing import TraceContext
+
+    ctx = TraceContext(trace_id="test-trace-123")
+    assert ctx.trace_id == "test-trace-123"
+    assert ctx.span_id.startswith("span_")
+
+    sns_attrs = ctx.inject_sns_attributes()
+    assert "TraceID" in sns_attrs
+    assert sns_attrs["TraceID"]["StringValue"] == "test-trace-123"
+
