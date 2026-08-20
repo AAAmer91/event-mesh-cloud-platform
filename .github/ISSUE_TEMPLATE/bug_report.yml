@@ -1,0 +1,50 @@
+name: 🐛 Bug Report
+description: Report an issue or unexpected behavior in the Event-Mesh Cloud Platform
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report an issue!
+  - type: input
+    id: component
+    attributes:
+      label: Affected Component
+      description: Which part of the platform is encountering issues?
+      placeholder: e.g. LocalStack Terraform, Order Ingest Lambda, SQS Consumer, DLQ Redrive
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Step-by-step commands or payloads to reproduce the issue.
+      placeholder: |
+        1. Run `make up`
+        2. Run `make tf-apply`
+        3. Send POST request to `/orders` with payload ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - LocalStack v3 (Docker)
+        - AWS Live Environment (Dev/Prod)
+        - CI / GitHub Actions Runner
+    validations:
+      required: true

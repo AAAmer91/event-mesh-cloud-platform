@@ -1,0 +1,33 @@
+name: 🚀 Feature Request
+description: Suggest an enhancement or architectural extension for the Event-Mesh Cloud Platform
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: Thank you for proposing a feature or architectural enhancement!
+  - type: input
+    id: title
+    attributes:
+      label: Feature Title
+      placeholder: e.g. Add Kinesis Data Streams integration or OpenSearch sink
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Problem or Motivation
+      description: Is your feature request related to a specific cloud challenge or use case?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Architectural Solution
+      description: Describe the design or implementation approach you envision.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative cloud services or patterns you evaluated.

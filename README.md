@@ -50,8 +50,10 @@ flowchart LR
 * **🛡️ Idempotent Execution:** Guarantees zero duplicate order writes in DynamoDB via conditional write expressions (`attribute_not_exists(order_id)`).
 * **🔄 Partial Batch Failure Isolation:** Configured with `ReportBatchItemFailures` so failed queue items are isolated and redriven without stalling the batch.
 * **📦 Dead Letter Queue (DLQ) & Alerting:** Automatic message quarantine after 3 failed delivery attempts paired with CloudWatch depth alarms.
+* **🧪 Chaos & Resilience Simulation:** Built-in chaos testing tool (`make chaos`) validating zero data loss under concurrent burst traffic and poisoned message injections.
+* **🔬 Distributed Trace Correlation:** End-to-end trace context propagation across HTTP headers, SNS MessageAttributes, and CloudWatch structured JSON logs.
 * **🧪 100% Local Cloud Simulation:** Fully provisioned and tested locally against **LocalStack v3** via Docker Compose—zero cloud bills.
-* **🚀 Production-Grade CI/CD:** Complete GitHub Actions pipeline executing unit tests in matrix across Python 3.11/3.12 and end-to-end Terraform + LocalStack integration suites on every PR.
+* **🚀 Production-Grade CI/CD:** Complete GitHub Actions pipeline executing matrix unit tests across Python 3.11/3.12, LocalStack integration tests, and rich Markdown step summaries.
 
 ---
 
@@ -61,9 +63,10 @@ flowchart LR
 event-mesh-cloud-platform/
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                 # LocalStack service container + Terraform apply + Pytest integration suite
+│   │   ├── ci.yml                 # LocalStack container + Terraform apply + Step Summary Dashboard
 │   │   ├── lint-and-security.yml  # TFLint, Terraform fmt, Ruff linter
 │   │   └── release.yml            # Semantic release and GitHub release tagging
+│   ├── ISSUE_TEMPLATE/            # Enterprise GitHub Bug & Feature form templates
 │   └── pull_request_template.md
 ├── infra/
 │   └── terraform/
@@ -74,14 +77,18 @@ event-mesh-cloud-platform/
 │       │   │   └── variables.tf
 │       │   └── prod/              # Production AWS provider
 │       └── modules/
-│           ├── compute/           # Lambda functions & API Gateway v2
-│           ├── messaging/         # SNS topics, SQS queues, DLQ & redrive policies
-│           ├── storage/           # S3 bucket with notifications & DynamoDB table
-│           └── observability/     # CloudWatch log groups & DLQ metric alarms
+│           ├── compute/           # Lambda functions & API Gateway v2 [README.md]
+│           ├── messaging/         # SNS topics, SQS queues, DLQ & redrive policies [README.md]
+│           ├── storage/           # S3 bucket with notifications & DynamoDB table [README.md]
+│           └── observability/     # CloudWatch log groups & DLQ metric alarms [README.md]
+├── scripts/
+│   ├── benchmark_events.py        # High-throughput load benchmarking utility
+│   └── chaos_test.py              # Chaos & poison-pill resilience simulation tool
 ├── src/
 │   ├── core/
-│   │   ├── logger.py              # Structured JSON logging with trace correlation
-│   │   └── metrics.py             # Custom CloudWatch metric emitter
+│   │   ├── logger.py              # Structured JSON logging
+│   │   ├── metrics.py             # Custom CloudWatch metric emitter
+│   │   └── tracing.py             # Distributed trace context & SNS propagator
 │   └── handlers/
 │       ├── order_ingest.py        # Ingestion API endpoint -> SNS publisher
 │       ├── order_worker.py        # SQS consumer with idempotent DynamoDB write & retry logic
@@ -95,10 +102,12 @@ event-mesh-cloud-platform/
 │   └── unit/
 │       └── test_handlers.py       # Unit tests with mocked AWS SDK calls
 ├── docker-compose.yml             # LocalStack v3 with auto-provisioning
-├── Makefile                       # Single-command dev workflow
+├── Makefile                       # Single-command dev workflow (`make up`, `make chaos`, `make bench`)
 ├── pyproject.toml                 # Ruff, Pytest, MyPy configurations
 ├── requirements.txt / dev-requirements.txt
 ├── ARCHITECTURE.md                # Deep-dive architecture and design decisions
+├── CONTRIBUTING.md                # Open-source contribution guide
+├── SECURITY.md                    # Vulnerability reporting protocols
 └── README.md
 ```
 
@@ -111,25 +120,25 @@ event-mesh-cloud-platform/
 - [Python 3.11+](https://www.python.org/)
 - [Terraform 1.5+](https://www.terraform.io/)
 
-### 2. Start LocalStack
+### 2. Start LocalStack & Provision Infrastructure
 ```bash
-# Spin up LocalStack v3 in background
-docker compose up -d
+# Spin up LocalStack v3 in background and apply Terraform
+make up
+make tf-init
+make tf-apply
 ```
 
-### 3. Provision Infrastructure with Terraform
+### 3. Run Automated Tests
 ```bash
-# Initialize and apply Terraform against LocalStack
-cd infra/terraform/environments/local
-terraform init
-terraform apply -auto-approve
+make test-unit        # Fast in-memory unit tests
+make test-integration # End-to-end LocalStack integration tests
+make test             # Full suite with coverage report
 ```
 
-### 4. Run Test Suite
+### 4. Run Chaos & Benchmark Simulations
 ```bash
-# In the project root:
-pytest tests/unit -v              # Fast in-memory unit tests
-pytest tests/integration -v       # End-to-end LocalStack integration tests
+make chaos            # Injects burst traffic + poison-pill messages (verifies DLQ routing)
+make bench            # Runs concurrent ingestion load benchmark
 ```
 
 ---
@@ -140,6 +149,7 @@ pytest tests/integration -v       # End-to-end LocalStack integration tests
 |---|---|---|
 | **Unit Tests** | `pytest`, `moto` | Fast in-memory tests validating Pydantic schemas, payload error responses, and idempotency logic. |
 | **Integration Tests** | `pytest`, `LocalStack` | Tests real asynchronous SNS fanout, SQS queue consumption, DLQ redrive, S3 bucket notifications, and DynamoDB storage. |
+| **Chaos Simulation** | `python`, `boto3` | Injects 100 concurrent orders with 10% deliberate failure payloads to verify zero data loss and automated DLQ quarantine. |
 | **Lint & Security** | `ruff`, `terraform fmt` | Strict code quality, formatting, and infrastructure syntax validation. |
 
 ---
