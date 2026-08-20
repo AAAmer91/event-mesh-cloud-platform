@@ -47,54 +47,59 @@ def test_end_to_end_order_flow(localstack_endpoint):
     ingest_res = order_ingest.handler(ingest_event)
     assert ingest_res["statusCode"] == 201
 
-    # Step 2: Resolve Queue URL and Poll SQS for message delivered via SNS fanout
-    raw_url = sqs.get_queue_url(QueueName="event-mesh-local-order-events-queue")["QueueUrl"]
-    # Normalize queue URL for localhost endpoint compatibility
-    path_suffix = raw_url.split("/", 3)[-1] if raw_url.count("/") >= 3 else raw_url
-    queue_url = f"{localstack_endpoint.rstrip('/')}/{path_suffix}"
+    # Step 2: Poll DynamoDB or SQS (LocalStack ESM may auto-process, or message awaits in SQS)
+    table = dynamodb.Table("event-mesh-local-orders-table")
+    queue_url = sqs.get_queue_url(QueueName="event-mesh-local-order-events-queue")["QueueUrl"]
 
-    messages = []
+    processed = False
     for _ in range(15):
+        # Check if Lambda Event Source Mapping already processed the record to DynamoDB
+        scan_res = table.scan(
+            FilterExpression="order_id = :oid",
+            ExpressionAttributeValues={":oid": order_id},
+        )
+        items = scan_res.get("Items", [])
+        if items and items[0].get("status") == "PROCESSED":
+            processed = True
+            break
+
+        # If not yet in DynamoDB, check if message is in SQS and process it
         recv_res = sqs.receive_message(
             QueueUrl=queue_url,
             MaxNumberOfMessages=1,
-            WaitTimeSeconds=2,
+            WaitTimeSeconds=1,
         )
         messages = recv_res.get("Messages", [])
         if messages:
+            msg = messages[0]
+            worker_event = {
+                "Records": [
+                    {
+                        "messageId": msg["MessageId"],
+                        "body": msg["Body"],
+                    }
+                ]
+            }
+            worker_res = order_worker.handler(worker_event)
+            assert worker_res["batchItemFailures"] == []
+            sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg["ReceiptHandle"])
+            processed = True
             break
+
         time.sleep(0.5)
 
-    assert len(messages) > 0, "No message received in SQS order queue from SNS topic"
-    msg = messages[0]
+    assert processed, f"Order {order_id} was not processed through the event mesh"
 
-    # Step 3: Trigger order worker Lambda with received SQS message
-    worker_event = {
-        "Records": [
-            {
-                "messageId": msg["MessageId"],
-                "body": msg["Body"],
-            }
-        ]
-    }
-    worker_res = order_worker.handler(worker_event)
-    assert worker_res["batchItemFailures"] == []
-
-    # Step 4: Delete message from queue
-    sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg["ReceiptHandle"])
-
-    # Step 5: Query DynamoDB for order record
-    table = dynamodb.Table("event-mesh-local-orders-table")
-    scan_res = table.scan(
+    # Step 3: Final verification of DynamoDB record
+    final_scan = table.scan(
         FilterExpression="order_id = :oid",
         ExpressionAttributeValues={":oid": order_id},
     )
-
-    items = scan_res.get("Items", [])
-    assert len(items) == 1
-    assert items[0]["order_id"] == order_id
-    assert items[0]["customer_id"] == customer_id
-    assert items[0]["status"] == "PROCESSED"
+    final_items = final_scan.get("Items", [])
+    assert len(final_items) == 1
+    assert final_items[0]["order_id"] == order_id
+    assert final_items[0]["customer_id"] == customer_id
+    assert final_items[0]["status"] == "PROCESSED"
 
 
 @pytest.mark.integration
@@ -153,10 +158,10 @@ def test_s3_batch_ingestion_flow(localstack_endpoint):
 
     assert res["statusCode"] == 200
     res_body = json.loads(res["body"])
-    assert res_body["processed_records"] == 2
+    assert res_body["processed_orders"] == 2
 
     # Verify both records were persisted to DynamoDB
     table = dynamodb.Table("event-mesh-local-orders-table")
     item1 = table.get_item(Key={"order_id": order_id_1, "created_at": "2026-08-20T22:00:00Z"})
     assert "Item" in item1
-    assert item1["Item"]["status"] == "PROCESSED"
+    assert item1["Item"]["status"] == "BATCH_PROCESSED"

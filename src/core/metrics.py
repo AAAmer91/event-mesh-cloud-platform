@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 import boto3
+from botocore.config import Config
 
 from src.core.logger import get_logger
 
@@ -24,7 +25,12 @@ class CloudWatchMetrics:
         """Lazily initialize boto3 CloudWatch client."""
         if self._client is None:
             endpoint_url = os.getenv("AWS_ENDPOINT_URL")
-            self._client = boto3.client("cloudwatch", endpoint_url=endpoint_url)
+            config = Config(
+                retries={"max_attempts": 0, "mode": "standard"}, connect_timeout=1, read_timeout=1
+            )
+            self._client = boto3.client(
+                "cloudwatch", endpoint_url=endpoint_url, region_name="us-east-1", config=config
+            )
         return self._client
 
     def put_metric(
