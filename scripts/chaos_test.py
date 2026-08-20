@@ -11,8 +11,8 @@ Simulates real-world production failure scenarios against LocalStack:
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import json
+
 import time
 import uuid
 import boto3

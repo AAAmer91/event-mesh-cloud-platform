@@ -61,16 +61,16 @@ resource "aws_sns_topic" "order_events" {
 # SNS -> SQS Subscriptions (Fanout)
 # ==============================================================================
 resource "aws_sns_topic_subscription" "order_queue_sub" {
-  topic_arn = aws_sns_topic.order_events.arn
-  protocol  = "sqs"
-  endpoint  = aws_sqs_queue.order_queue.arn
+  topic_arn            = aws_sns_topic.order_events.arn
+  protocol             = "sqs"
+  endpoint             = aws_sqs_queue.order_queue.arn
   raw_message_delivery = false
 }
 
 resource "aws_sns_topic_subscription" "notification_queue_sub" {
-  topic_arn = aws_sns_topic.order_events.arn
-  protocol  = "sqs"
-  endpoint  = aws_sqs_queue.notification_queue.arn
+  topic_arn            = aws_sns_topic.order_events.arn
+  protocol             = "sqs"
+  endpoint             = aws_sqs_queue.notification_queue.arn
   raw_message_delivery = false
 }
 

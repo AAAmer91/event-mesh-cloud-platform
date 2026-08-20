@@ -130,9 +130,9 @@ resource "aws_lambda_function" "order_ingest" {
 
   environment {
     variables = {
-      SNS_TOPIC_ARN       = var.sns_topic_arn
-      ENVIRONMENT         = var.environment
-      LOG_LEVEL           = "INFO"
+      SNS_TOPIC_ARN           = var.sns_topic_arn
+      ENVIRONMENT             = var.environment
+      LOG_LEVEL               = "INFO"
       POWERTOOLS_SERVICE_NAME = "order-ingest"
     }
   }
@@ -158,9 +158,9 @@ resource "aws_lambda_function" "order_worker" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE_NAME = var.dynamodb_table_name
-      ENVIRONMENT         = var.environment
-      LOG_LEVEL           = "INFO"
+      DYNAMODB_TABLE_NAME     = var.dynamodb_table_name
+      ENVIRONMENT             = var.environment
+      LOG_LEVEL               = "INFO"
       POWERTOOLS_SERVICE_NAME = "order-worker"
     }
   }
@@ -195,9 +195,9 @@ resource "aws_lambda_function" "s3_processor" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE_NAME = var.dynamodb_table_name
-      ENVIRONMENT         = var.environment
-      LOG_LEVEL           = "INFO"
+      DYNAMODB_TABLE_NAME     = var.dynamodb_table_name
+      ENVIRONMENT             = var.environment
+      LOG_LEVEL               = "INFO"
       POWERTOOLS_SERVICE_NAME = "s3-processor"
     }
   }

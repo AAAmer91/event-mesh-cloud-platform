@@ -5,7 +5,7 @@ import concurrent.futures
 import json
 import time
 import urllib.request
-import uuid
+
 
 
 def generate_mock_order(index: int) -> dict:

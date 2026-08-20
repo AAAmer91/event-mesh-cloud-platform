@@ -52,11 +52,6 @@ jobs:
           SERVICES: s3,sqs,sns,dynamodb,lambda,apigateway,cloudwatch,logs,iam
           AWS_DEFAULT_REGION: us-east-1
           DOCKER_HOST: unix:///var/run/docker.sock
-        options: >-
-          --health-cmd="curl -f http://localhost:4566/_localstack/health || exit 1"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
 
     steps:
       - name: Checkout Repository
@@ -77,6 +72,18 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.8.0
+
+      - name: Wait for LocalStack Readiness
+        run: |
+          echo "Waiting for LocalStack to be fully available..."
+          for i in {1..30}; do
+            if curl -s http://localhost:4566/_localstack/health | grep "\"s3\": \"running\""; then
+              echo "LocalStack is ready!"
+              break
+            fi
+            echo "Waiting for LocalStack ($i/30)..."
+            sleep 2
+          done
 
       - name: Initialize and Apply Terraform on LocalStack
         run: |

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
-import urllib.parse
 
 import boto3
+
 
 from src.core.logger import get_logger
 from src.core.metrics import CloudWatchMetrics

@@ -19,8 +19,8 @@ jobs:
         run: pip install ruff
       - name: Check Formatting & Linting
         run: |
-          ruff format --check src/ tests/
-          ruff check src/ tests/
+          ruff format --check src/ tests/ scripts/
+          ruff check src/ tests/ scripts/
 
   terraform-lint:
     name: Terraform Format & Validation

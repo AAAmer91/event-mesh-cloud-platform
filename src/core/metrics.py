@@ -16,8 +16,15 @@ class CloudWatchMetrics:
 
     def __init__(self, namespace: str = "EventMeshPlatform/Orders", client: Any | None = None):
         self.namespace = namespace
-        endpoint_url = os.getenv("AWS_ENDPOINT_URL")
-        self.client = client or boto3.client("cloudwatch", endpoint_url=endpoint_url)
+        self._client = client
+
+    @property
+    def client(self) -> Any:
+        """Lazily initialize boto3 CloudWatch client."""
+        if self._client is None:
+            endpoint_url = os.getenv("AWS_ENDPOINT_URL")
+            self._client = boto3.client("cloudwatch", endpoint_url=endpoint_url)
+        return self._client
 
     def put_metric(
         self,
