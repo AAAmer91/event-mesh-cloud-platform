@@ -2,6 +2,7 @@
 
 import json
 import uuid
+
 import boto3
 import pytest
 
@@ -25,7 +26,9 @@ def test_s3_file_batch_ingestion(localstack_endpoint):
             "total_amount": 1500.00,
             "currency": "USD",
             "created_at": "2026-08-21T01:00:00Z",
-            "items": [{"item_id": "it_100", "name": "Bulk Storage", "quantity": 10, "unit_price": 150.0}],
+            "items": [
+                {"item_id": "it_100", "name": "Bulk Storage", "quantity": 10, "unit_price": 150.0}
+            ],
         }
     ]
 

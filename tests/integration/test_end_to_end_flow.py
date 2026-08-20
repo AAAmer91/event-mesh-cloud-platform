@@ -3,6 +3,7 @@
 import json
 import time
 import uuid
+
 import boto3
 import pytest
 
@@ -12,7 +13,6 @@ from src.handlers import order_ingest, order_worker
 @pytest.mark.integration
 def test_end_to_end_order_flow(localstack_endpoint):
     """Verifies complete flow: Ingest Order -> SNS Topic -> SQS Queue -> Worker -> DynamoDB."""
-    sns = boto3.client("sns", endpoint_url=localstack_endpoint, region_name="us-east-1")
     sqs = boto3.client("sqs", endpoint_url=localstack_endpoint, region_name="us-east-1")
     dynamodb = boto3.resource("dynamodb", endpoint_url=localstack_endpoint, region_name="us-east-1")
 
@@ -23,7 +23,12 @@ def test_end_to_end_order_flow(localstack_endpoint):
         "order_id": order_id,
         "customer_id": customer_id,
         "items": [
-            {"item_id": "item_compute_1", "name": "EC2 c6g.xlarge", "quantity": 1, "unit_price": 136.0},
+            {
+                "item_id": "item_compute_1",
+                "name": "EC2 c6g.xlarge",
+                "quantity": 1,
+                "unit_price": 136.0,
+            },
         ],
         "currency": "USD",
     }

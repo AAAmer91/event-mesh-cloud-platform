@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import argparse
 import json
-
 import time
 import uuid
+
 import boto3
 
 from src.handlers import order_ingest, order_worker
@@ -33,7 +33,7 @@ def run_chaos_simulation(
     poison_count = int(total_orders * poison_ratio)
     valid_count = total_orders - poison_count
     print(f"  • Valid Orders Expected: {valid_count}")
-    print(f"  • Poison-Pill Orders (DLQ Expected): {poison_count} ({poison_ratio*100:.0f}%)\n")
+    print(f"  • Poison-Pill Orders (DLQ Expected): {poison_count} ({poison_ratio * 100:.0f}%)\n")
 
     sqs = boto3.client("sqs", endpoint_url=endpoint, region_name="us-east-1")
     dynamodb = boto3.resource("dynamodb", endpoint_url=endpoint, region_name="us-east-1")
@@ -57,7 +57,12 @@ def run_chaos_simulation(
             "customer_id": f"cust_{i % 20}",
             "currency": "USD",
             "items": [
-                {"item_id": f"item_{i}", "name": "Resilience SKU", "quantity": 1, "unit_price": 50.0}
+                {
+                    "item_id": f"item_{i}",
+                    "name": "Resilience SKU",
+                    "quantity": 1,
+                    "unit_price": 50.0,
+                }
             ],
             "simulate_error": is_poison,
         }
@@ -67,14 +72,16 @@ def run_chaos_simulation(
     start_time = time.perf_counter()
 
     ingested_orders = 0
-    for order_id, payload, _ in orders:
+    for _order_id, payload, _ in orders:
         event = {"body": json.dumps(payload)}
         res = order_ingest.handler(event)
         if res["statusCode"] == 201:
             ingested_orders += 1
 
     ingest_duration = time.perf_counter() - start_time
-    print(f"   ✔ Ingested {ingested_orders}/{total_orders} orders in {ingest_duration:.2f}s ({(ingested_orders/ingest_duration):.1f} ops/sec)")
+    print(
+        f"   ✔ Ingested {ingested_orders}/{total_orders} orders in {ingest_duration:.2f}s ({(ingested_orders / ingest_duration):.1f} ops/sec)"
+    )
 
     # 2. Simulate Worker Consuming SQS Batch with automatic redrive
     print("\n⚙️ Step 2: Processing SQS queue batches and simulating redrive...")
@@ -112,20 +119,26 @@ def run_chaos_simulation(
 
     # Check DynamoDB valid records
     scan_res = table.scan()
-    stored_orders = [it for it in scan_res.get("Items", []) if batch_run_id in it.get("order_id", "")]
+    stored_orders = [
+        it for it in scan_res.get("Items", []) if batch_run_id in it.get("order_id", "")
+    ]
 
     # Check DLQ messages
-    dlq_attr = sqs.get_queue_attributes(QueueUrl=dlq_url, AttributeNames=["ApproximateNumberOfMessages"])
+    dlq_attr = sqs.get_queue_attributes(
+        QueueUrl=dlq_url, AttributeNames=["ApproximateNumberOfMessages"]
+    )
     dlq_msg_count = int(dlq_attr["Attributes"].get("ApproximateNumberOfMessages", 0))
 
     print("=" * 75)
     print("📊 RESILIENCE SIMULATION REPORT")
     print("=" * 75)
-    print(f"  • Valid Orders Persisted in DynamoDB:  {len(stored_orders)} (Expected: {valid_count})")
+    print(
+        f"  • Valid Orders Persisted in DynamoDB:  {len(stored_orders)} (Expected: {valid_count})"
+    )
     print(f"  • Corrupted Orders Isolated in DLQ:   {dlq_msg_count} (Expected: {poison_count})")
-    print(f"  • Primary Processing Queue Depth:     0 (Cleaned up successfully)")
-    print(f"  • Zero Data Loss Guarantee:           PASS ✅")
-    print(f"  • Fault Isolation Rate:               100% ✅")
+    print("  • Primary Processing Queue Depth:     0 (Cleaned up successfully)")
+    print("  • Zero Data Loss Guarantee:           PASS ✅")
+    print("  • Fault Isolation Rate:               100% ✅")
     print("=" * 75)
 
 
@@ -133,7 +146,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Event-Mesh Chaos & Resilience Simulator")
     parser.add_argument("--endpoint", default="http://localhost:4566", help="LocalStack Endpoint")
     parser.add_argument("--orders", type=int, default=50, help="Total orders to simulate")
-    parser.add_argument("--poison-ratio", type=float, default=0.10, help="Ratio of poison-pill messages (0.0 to 1.0)")
+    parser.add_argument(
+        "--poison-ratio",
+        type=float,
+        default=0.10,
+        help="Ratio of poison-pill messages (0.0 to 1.0)",
+    )
     args = parser.parse_args()
 
     run_chaos_simulation(args.endpoint, args.orders, args.poison_ratio)

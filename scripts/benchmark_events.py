@@ -7,7 +7,6 @@ import time
 import urllib.request
 
 
-
 def generate_mock_order(index: int) -> dict:
     return {
         "customer_id": f"cust_bench_{index % 100}",
@@ -44,7 +43,9 @@ def send_order(endpoint: str, order: dict) -> tuple[bool, float]:
 
 
 def run_benchmark(endpoint: str, total_requests: int = 50, concurrency: int = 5):
-    print(f"🚀 Starting Event Ingestion Benchmark: {total_requests} requests (concurrency: {concurrency})")
+    print(
+        f"🚀 Starting Event Ingestion Benchmark: {total_requests} requests (concurrency: {concurrency})"
+    )
     print(f"🔗 Target Endpoint: {endpoint}\n")
 
     orders = [generate_mock_order(i) for i in range(total_requests)]
@@ -65,18 +66,22 @@ def run_benchmark(endpoint: str, total_requests: int = 50, concurrency: int = 5)
 
     print("📊 Benchmark Results:")
     print(f"  • Total Requests:  {total_requests}")
-    print(f"  • Success Rate:    {success_count}/{total_requests} ({(success_count/total_requests)*100:.1f}%)")
+    print(
+        f"  • Success Rate:    {success_count}/{total_requests} ({(success_count / total_requests) * 100:.1f}%)"
+    )
     print(f"  • Total Time:      {wall_duration:.2f}s")
     print(f"  • Throughput:      {throughput:.1f} req/sec")
     if latencies:
-        print(f"  • Avg Latency:     {(sum(latencies)/len(latencies))*1000:.1f} ms")
-        print(f"  • Min Latency:     {min(latencies)*1000:.1f} ms")
-        print(f"  • Max Latency:     {max(latencies)*1000:.1f} ms")
+        print(f"  • Avg Latency:     {(sum(latencies) / len(latencies)) * 1000:.1f} ms")
+        print(f"  • Min Latency:     {min(latencies) * 1000:.1f} ms")
+        print(f"  • Max Latency:     {max(latencies) * 1000:.1f} ms")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Event Ingestion Load Benchmarker")
-    parser.add_argument("--endpoint", default="http://localhost:4566/restapis/orders", help="Target API URL")
+    parser.add_argument(
+        "--endpoint", default="http://localhost:4566/restapis/orders", help="Target API URL"
+    )
     parser.add_argument("--requests", type=int, default=50, help="Total requests to fire")
     parser.add_argument("--concurrency", type=int, default=5, help="Concurrent workers")
     args = parser.parse_args()

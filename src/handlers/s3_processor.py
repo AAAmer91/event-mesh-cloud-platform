@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 import os
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 import boto3
-
 
 from src.core.logger import get_logger
 from src.core.metrics import CloudWatchMetrics
@@ -53,7 +52,7 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         try:
             response = s3.get_object(Bucket=bucket, Key=key)
             content = response["Body"].read().decode("utf-8")
-            payload = json.loads(content)
+            payload = json.loads(content, parse_float=Decimal)
 
             # Support single order object or array of orders
             orders = payload if isinstance(payload, list) else [payload]
@@ -65,7 +64,7 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
                         continue
 
                     total_amount = Decimal(str(order.get("total_amount", 0.0)))
-                    created_at = order.get("created_at", datetime.now(timezone.utc).isoformat())
+                    created_at = order.get("created_at", datetime.now(UTC).isoformat())
 
                     item = {
                         "order_id": order_id,
@@ -76,12 +75,14 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
                         "currency": order.get("currency", "USD"),
                         "items": order.get("items", []),
                         "source_file": f"s3://{bucket}/{key}",
-                        "processed_at": datetime.now(timezone.utc).isoformat(),
+                        "processed_at": datetime.now(UTC).isoformat(),
                     }
                     batch.put_item(Item=item)
                     processed_count += 1
 
-            logger.info(f"Successfully processed {processed_count} order(s) from s3://{bucket}/{key}")
+            logger.info(
+                f"Successfully processed {processed_count} order(s) from s3://{bucket}/{key}"
+            )
             metrics.put_metric("S3BatchOrdersProcessed", float(processed_count))
 
         except Exception as exc:

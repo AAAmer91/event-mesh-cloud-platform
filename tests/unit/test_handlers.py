@@ -2,11 +2,12 @@
 
 import json
 from decimal import Decimal
+
 import pytest
 
-from src.handlers import order_ingest, order_worker, s3_processor
 from src.core.logger import get_logger
 from src.core.metrics import CloudWatchMetrics
+from src.handlers import order_ingest, order_worker, s3_processor
 
 
 @pytest.mark.unit
@@ -17,7 +18,12 @@ def test_order_ingest_happy_path(moto_sns):
     payload = {
         "customer_id": "cust_12345",
         "items": [
-            {"item_id": "item_1", "name": "Cloud Server Instance", "quantity": 2, "unit_price": 50.0},
+            {
+                "item_id": "item_1",
+                "name": "Cloud Server Instance",
+                "quantity": 2,
+                "unit_price": 50.0,
+            },
             {"item_id": "item_2", "name": "Load Balancer", "quantity": 1, "unit_price": 25.0},
         ],
         "currency": "USD",
@@ -78,7 +84,9 @@ def test_order_worker_processing(moto_dynamodb):
                         "total_amount": 99.99,
                         "currency": "USD",
                         "created_at": "2026-08-21T00:00:00Z",
-                        "items": [{"item_id": "i1", "name": "Widget", "quantity": 1, "unit_price": 99.99}],
+                        "items": [
+                            {"item_id": "i1", "name": "Widget", "quantity": 1, "unit_price": 99.99}
+                        ],
                     }
                 ),
             }
@@ -201,4 +209,3 @@ def test_trace_context():
     sns_attrs = ctx.inject_sns_attributes()
     assert "TraceID" in sns_attrs
     assert sns_attrs["TraceID"]["StringValue"] == "test-trace-123"
-

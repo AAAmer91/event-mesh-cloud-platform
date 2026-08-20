@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -26,10 +26,10 @@ def get_dynamodb_resource() -> Any:
 
 def parse_sqs_body(record_body: str) -> dict[str, Any]:
     """Parses SQS message body, unwrapping SNS envelope if present."""
-    data = json.loads(record_body)
+    data = json.loads(record_body, parse_float=Decimal)
     if isinstance(data, dict) and "TopicArn" in data and "Message" in data:
         # Message was routed through SNS -> SQS fanout
-        return json.loads(data["Message"])
+        return json.loads(data["Message"], parse_float=Decimal)
     return data
 
 
@@ -38,7 +38,7 @@ def process_single_order(order_data: dict[str, Any], table: Any) -> bool:
     order_id = order_data["order_id"]
     customer_id = order_data["customer_id"]
     created_at = order_data["created_at"]
-    processed_at = datetime.now(timezone.utc).isoformat()
+    processed_at = datetime.now(UTC).isoformat()
 
     # Simulate deliberate failure for DLQ resilience testing
     if order_data.get("simulate_error") is True:

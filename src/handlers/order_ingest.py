@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import boto3
@@ -67,7 +67,9 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     try:
         order = OrderPayload.model_validate(body)
     except ValidationError as val_err:
-        logger.warning("Order validation failed", extra={"extra_data": {"errors": val_err.errors()}})
+        logger.warning(
+            "Order validation failed", extra={"extra_data": {"errors": val_err.errors()}}
+        )
         metrics.put_metric("OrderValidationErrors", 1.0)
         return {
             "statusCode": 422,
@@ -77,7 +79,7 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
 
     # Generate Order Metadata
     order_id = order.order_id or f"ord_{uuid.uuid4().hex[:12]}"
-    created_at = datetime.now(timezone.utc).isoformat()
+    created_at = datetime.now(UTC).isoformat()
     total_amount = sum(item.quantity * item.unit_price for item in order.items)
 
     order_event = {
@@ -145,5 +147,7 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         return {
             "statusCode": 502,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"error": "Failed to publish event to message bus", "trace_id": trace_id}),
+            "body": json.dumps(
+                {"error": "Failed to publish event to message bus", "trace_id": trace_id}
+            ),
         }

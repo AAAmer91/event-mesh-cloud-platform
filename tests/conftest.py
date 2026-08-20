@@ -1,8 +1,9 @@
 """Pytest Configuration and Fixtures for Unit and LocalStack Integration Tests."""
 
 import os
-import pytest
+
 import boto3
+import pytest
 from moto import mock_aws
 
 # Set test environment variables before importing app modules
