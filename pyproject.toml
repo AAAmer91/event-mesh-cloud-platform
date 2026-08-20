@@ -51,6 +51,7 @@ ignore = ["E501", "PLR2004", "PLR0913", "PLR0915"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --strict-markers --tb=short"
