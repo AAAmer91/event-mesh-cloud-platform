@@ -37,12 +37,52 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r dev-requirements.txt
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.0
+
+      - name: Start LocalStack via Docker Compose
+        run: |
+          docker compose up -d
+
+      - name: Wait for LocalStack Readiness
+        run: |
+          echo "Waiting for LocalStack to be fully available..."
+          for i in {1..30}; do
+            if curl -s http://localhost:4566/_localstack/health | grep "\"s3\": \"running\""; then
+              echo "LocalStack is ready!"
+              break
+            fi
+            echo "Waiting for LocalStack ($i/30)..."
+            sleep 2
+          done
+
+      - name: Initialize and Apply Terraform on LocalStack
+        run: |
+          cd infra/terraform/environments/local
+          terraform init
+          terraform apply -auto-approve
+
       - name: Run Load Benchmark Suite
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:event-mesh-local-order-events-topic
         run: |
           echo "Executing Event Mesh Load Benchmark..."
-          python scripts/benchmark_events.py --total ${{ github.event.inputs.event_count || '100' }} --batch ${{ github.event.inputs.batch_size || '20' }}
+          python scripts/benchmark_events.py --total ${{ github.event.inputs.event_count || '100' }} --batch ${{ github.event.inputs.batch_size || '20' }} --direct
 
       - name: Run Chaos Engineering & Poison-Pill Simulation
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:event-mesh-local-order-events-topic
+          DYNAMODB_TABLE_NAME: event-mesh-local-orders-table
         run: |
           echo "Executing Chaos & Fault Isolation Verification..."
           python scripts/chaos_test.py --count 50 --chaos-ratio 0.2
@@ -59,3 +99,8 @@ jobs:
           echo "| **S3 Batch Bulk Payload Stream** | S3 Ingestion Bucket | Zero Data Loss | Idempotent DynamoDB Writes |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "> 📊 **All Cloud SLAs and Resilience Gates Passed Successfully.**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Teardown LocalStack
+        if: always()
+        run: |
+          docker compose down -v

@@ -145,9 +145,13 @@ def run_chaos_simulation(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Event-Mesh Chaos & Resilience Simulator")
     parser.add_argument("--endpoint", default="http://localhost:4566", help="LocalStack Endpoint")
-    parser.add_argument("--orders", type=int, default=50, help="Total orders to simulate")
+    parser.add_argument(
+        "--orders", "--count", dest="orders", type=int, default=50, help="Total orders to simulate"
+    )
     parser.add_argument(
         "--poison-ratio",
+        "--chaos-ratio",
+        dest="poison_ratio",
         type=float,
         default=0.10,
         help="Ratio of poison-pill messages (0.0 to 1.0)",

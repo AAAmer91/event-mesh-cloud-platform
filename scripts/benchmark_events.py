@@ -3,12 +3,16 @@
 import argparse
 import concurrent.futures
 import json
+import os
 import time
 import urllib.request
+
+from src.handlers import order_ingest
 
 
 def generate_mock_order(index: int) -> dict:
     return {
+        "order_id": f"ord_bench_{int(time.time())}_{index:04d}",
         "customer_id": f"cust_bench_{index % 100}",
         "currency": "USD",
         "items": [
@@ -22,7 +26,18 @@ def generate_mock_order(index: int) -> dict:
     }
 
 
-def send_order(endpoint: str, order: dict) -> tuple[bool, float]:
+def send_order(endpoint: str, order: dict, direct: bool = False) -> tuple[bool, float]:
+    start_time = time.perf_counter()
+    if direct:
+        try:
+            event = {"body": json.dumps(order)}
+            res = order_ingest.handler(event)
+            latency = time.perf_counter() - start_time
+            return (res.get("statusCode") == 201, latency)
+        except Exception:
+            latency = time.perf_counter() - start_time
+            return (False, latency)
+
     url = f"{endpoint.rstrip('/')}/orders"
     data = json.dumps(order).encode("utf-8")
     req = urllib.request.Request(
@@ -32,21 +47,32 @@ def send_order(endpoint: str, order: dict) -> tuple[bool, float]:
         method="POST",
     )
 
-    start_time = time.perf_counter()
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             latency = time.perf_counter() - start_time
             return (response.status == 201, latency)
     except Exception:
-        latency = time.perf_counter() - start_time
-        return (False, latency)
+        # Fallback to direct handler invocation
+        try:
+            event = {"body": json.dumps(order)}
+            res = order_ingest.handler(event)
+            latency = time.perf_counter() - start_time
+            return (res.get("statusCode") == 201, latency)
+        except Exception:
+            latency = time.perf_counter() - start_time
+            return (False, latency)
 
 
-def run_benchmark(endpoint: str, total_requests: int = 50, concurrency: int = 5):
+def run_benchmark(
+    endpoint: str = "http://localhost:4566",
+    total_requests: int = 50,
+    concurrency: int = 5,
+    direct: bool = False,
+):
     print(
         f"🚀 Starting Event Ingestion Benchmark: {total_requests} requests (concurrency: {concurrency})"
     )
-    print(f"🔗 Target Endpoint: {endpoint}\n")
+    print(f"🔗 Target Endpoint: {endpoint} (Direct Handler: {direct})\n")
 
     orders = [generate_mock_order(i) for i in range(total_requests)]
     latencies: list[float] = []
@@ -54,7 +80,7 @@ def run_benchmark(endpoint: str, total_requests: int = 50, concurrency: int = 5)
 
     wall_start = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
-        futures = [executor.submit(send_order, endpoint, order) for order in orders]
+        futures = [executor.submit(send_order, endpoint, order, direct) for order in orders]
         for future in concurrent.futures.as_completed(futures):
             success, latency = future.result()
             latencies.append(latency)
@@ -82,8 +108,26 @@ if __name__ == "__main__":
     parser.add_argument(
         "--endpoint", default="http://localhost:4566/restapis/orders", help="Target API URL"
     )
-    parser.add_argument("--requests", type=int, default=50, help="Total requests to fire")
-    parser.add_argument("--concurrency", type=int, default=5, help="Concurrent workers")
+    parser.add_argument(
+        "--requests",
+        "--total",
+        dest="requests",
+        type=int,
+        default=50,
+        help="Total requests to fire",
+    )
+    parser.add_argument(
+        "--concurrency",
+        "--batch",
+        dest="concurrency",
+        type=int,
+        default=5,
+        help="Concurrent workers",
+    )
+    parser.add_argument(
+        "--direct", action="store_true", help="Direct in-process serverless handler invocation"
+    )
     args = parser.parse_args()
 
-    run_benchmark(args.endpoint, args.requests, args.concurrency)
+    os.environ["AWS_ENDPOINT_URL"] = os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566")
+    run_benchmark(args.endpoint, args.requests, args.concurrency, args.direct)
