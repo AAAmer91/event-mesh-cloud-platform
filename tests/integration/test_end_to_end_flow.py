@@ -1,20 +1,29 @@
-"""End-to-End Integration Tests against LocalStack / AWS."""
+"""End-to-End Integration Tests against LocalStack Cloud Infrastructure."""
 
 import json
+import os
 import time
 import uuid
 
 import boto3
 import pytest
 
-from src.handlers import order_ingest, order_worker
+from src.handlers import order_ingest, order_worker, s3_processor
 
 
 @pytest.mark.integration
 def test_end_to_end_order_flow(localstack_endpoint):
     """Verifies complete flow: Ingest Order -> SNS Topic -> SQS Queue -> Worker -> DynamoDB."""
+    sns = boto3.client("sns", endpoint_url=localstack_endpoint, region_name="us-east-1")
     sqs = boto3.client("sqs", endpoint_url=localstack_endpoint, region_name="us-east-1")
     dynamodb = boto3.resource("dynamodb", endpoint_url=localstack_endpoint, region_name="us-east-1")
+
+    # Configure environment for LocalStack
+    topic_res = sns.create_topic(Name="event-mesh-local-order-events-topic")
+    topic_arn = topic_res["TopicArn"]
+    os.environ["SNS_TOPIC_ARN"] = topic_arn
+    os.environ["DYNAMODB_TABLE_NAME"] = "event-mesh-local-orders-table"
+    os.environ["AWS_ENDPOINT_URL"] = localstack_endpoint
 
     order_id = f"ord_e2e_{uuid.uuid4().hex[:8]}"
     customer_id = "cust_e2e_vip"
@@ -43,7 +52,7 @@ def test_end_to_end_order_flow(localstack_endpoint):
     queue_url = queue_url_res["QueueUrl"]
 
     messages = []
-    for _ in range(10):
+    for _ in range(12):
         recv_res = sqs.receive_message(
             QueueUrl=queue_url,
             MaxNumberOfMessages=1,
@@ -84,3 +93,68 @@ def test_end_to_end_order_flow(localstack_endpoint):
     assert items[0]["order_id"] == order_id
     assert items[0]["customer_id"] == customer_id
     assert items[0]["status"] == "PROCESSED"
+
+
+@pytest.mark.integration
+def test_s3_batch_ingestion_flow(localstack_endpoint):
+    """Verifies S3 object creation event processing and bulk DynamoDB batch insert."""
+    s3 = boto3.client("s3", endpoint_url=localstack_endpoint, region_name="us-east-1")
+    dynamodb = boto3.resource("dynamodb", endpoint_url=localstack_endpoint, region_name="us-east-1")
+
+    bucket_name = "event-mesh-local-event-ingestion-payloads"
+    order_id_1 = f"ord_s3_{uuid.uuid4().hex[:8]}"
+    order_id_2 = f"ord_s3_{uuid.uuid4().hex[:8]}"
+
+    batch_payload = [
+        {
+            "order_id": order_id_1,
+            "customer_id": "cust_batch_101",
+            "items": [{"item_id": "i1", "name": "Storage", "quantity": 1, "unit_price": 50.0}],
+            "total_amount": 50.0,
+            "currency": "USD",
+            "status": "PENDING",
+            "created_at": "2026-08-20T22:00:00Z",
+        },
+        {
+            "order_id": order_id_2,
+            "customer_id": "cust_batch_102",
+            "items": [{"item_id": "i2", "name": "Bandwidth", "quantity": 2, "unit_price": 25.0}],
+            "total_amount": 50.0,
+            "currency": "USD",
+            "status": "PENDING",
+            "created_at": "2026-08-20T22:00:00Z",
+        },
+    ]
+
+    key = f"incoming/batch_{uuid.uuid4().hex[:6]}.json"
+    s3.put_object(
+        Bucket=bucket_name,
+        Key=key,
+        Body=json.dumps(batch_payload),
+        ContentType="application/json",
+    )
+
+    s3_event = {
+        "Records": [
+            {
+                "s3": {
+                    "bucket": {"name": bucket_name},
+                    "object": {"key": key},
+                }
+            }
+        ]
+    }
+
+    os.environ["DYNAMODB_TABLE_NAME"] = "event-mesh-local-orders-table"
+    os.environ["AWS_ENDPOINT_URL"] = localstack_endpoint
+    res = s3_processor.handler(s3_event)
+
+    assert res["statusCode"] == 200
+    res_body = json.loads(res["body"])
+    assert res_body["processed_records"] == 2
+
+    # Verify both records were persisted to DynamoDB
+    table = dynamodb.Table("event-mesh-local-orders-table")
+    item1 = table.get_item(Key={"order_id": order_id_1, "created_at": "2026-08-20T22:00:00Z"})
+    assert "Item" in item1
+    assert item1["Item"]["status"] == "PROCESSED"
