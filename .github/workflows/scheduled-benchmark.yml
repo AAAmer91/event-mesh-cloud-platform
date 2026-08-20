@@ -66,6 +66,7 @@ jobs:
 
       - name: Run Load Benchmark Suite
         env:
+          PYTHONPATH: .
           AWS_ENDPOINT_URL: http://localhost:4566
           AWS_DEFAULT_REGION: us-east-1
           AWS_ACCESS_KEY_ID: test
@@ -77,6 +78,7 @@ jobs:
 
       - name: Run Chaos Engineering & Poison-Pill Simulation
         env:
+          PYTHONPATH: .
           AWS_ENDPOINT_URL: http://localhost:4566
           AWS_DEFAULT_REGION: us-east-1
           AWS_ACCESS_KEY_ID: test
@@ -86,6 +88,7 @@ jobs:
         run: |
           echo "Executing Chaos & Fault Isolation Verification..."
           python scripts/chaos_test.py --count 50 --chaos-ratio 0.2
+
 
       - name: Publish Performance & Resilience Dashboard
         if: always()

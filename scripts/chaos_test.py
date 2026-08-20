@@ -12,10 +12,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 import uuid
+from pathlib import Path
 
 import boto3
+
+# Ensure project root is on sys.path for direct handler imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.handlers import order_ingest, order_worker
 

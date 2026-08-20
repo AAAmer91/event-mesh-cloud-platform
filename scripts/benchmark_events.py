@@ -4,8 +4,13 @@ import argparse
 import concurrent.futures
 import json
 import os
+import sys
 import time
 import urllib.request
+from pathlib import Path
+
+# Ensure project root is on sys.path for direct handler imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.handlers import order_ingest
 
