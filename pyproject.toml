@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "event-mesh-cloud-platform"
+version = "1.0.0"
+description = "Production-grade Event-Driven Cloud Platform with Terraform, LocalStack, and GitHub Actions CI"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Ahmed Amer", email = "a.a.amer91@gmail.com" }
+]
+keywords = ["aws", "serverless", "event-driven", "terraform", "localstack", "devops", "platform-engineering"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "boto3>=1.34.0",
+    "pydantic>=2.6.0",
+    "aws-lambda-powertools>=2.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+    "moto[all]>=5.0.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+    "boto3-stubs[essential]>=1.34.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "UP", "PL", "RUF"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers --tb=short"
+markers = [
+    "unit: fast in-memory unit tests with mocked AWS SDK",
+    "integration: end-to-end integration tests requiring LocalStack or live AWS",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+show_missing = true

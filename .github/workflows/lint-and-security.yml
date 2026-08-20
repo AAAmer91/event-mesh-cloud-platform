@@ -1,0 +1,39 @@
+name: Lint, Format & Security Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-lint:
+    name: Ruff & Python Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Ruff
+        run: pip install ruff
+      - name: Check Formatting & Linting
+        run: |
+          ruff format --check src/ tests/
+          ruff check src/ tests/
+
+  terraform-lint:
+    name: Terraform Format & Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.0
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive infra/terraform/
+      - name: Terraform Validate
+        run: |
+          cd infra/terraform/environments/local
+          terraform init -backend=false
+          terraform validate
