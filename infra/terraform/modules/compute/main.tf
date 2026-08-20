@@ -262,9 +262,10 @@ resource "aws_s3_bucket_notification" "bucket_notification" {
 }
 
 # ==============================================================================
-# API Gateway (HTTP API v2)
+# API Gateway (HTTP API v2) - Conditional for environments with HTTP API support
 # ==============================================================================
 resource "aws_apigatewayv2_api" "http_api" {
+  count         = var.enable_api_gateway ? 1 : 0
   name          = "${var.prefix}-http-api"
   protocol_type = "HTTP"
 
@@ -279,13 +280,15 @@ resource "aws_apigatewayv2_api" "http_api" {
 }
 
 resource "aws_apigatewayv2_stage" "default_stage" {
-  api_id      = aws_apigatewayv2_api.http_api.id
+  count       = var.enable_api_gateway ? 1 : 0
+  api_id      = aws_apigatewayv2_api.http_api[0].id
   name        = "$default"
   auto_deploy = true
 }
 
 resource "aws_apigatewayv2_integration" "lambda_integration" {
-  api_id                 = aws_apigatewayv2_api.http_api.id
+  count                  = var.enable_api_gateway ? 1 : 0
+  api_id                 = aws_apigatewayv2_api.http_api[0].id
   integration_type       = "AWS_PROXY"
   integration_uri        = aws_lambda_function.order_ingest.invoke_arn
   integration_method     = "POST"
@@ -293,15 +296,18 @@ resource "aws_apigatewayv2_integration" "lambda_integration" {
 }
 
 resource "aws_apigatewayv2_route" "orders_route" {
-  api_id    = aws_apigatewayv2_api.http_api.id
+  count     = var.enable_api_gateway ? 1 : 0
+  api_id    = aws_apigatewayv2_api.http_api[0].id
   route_key = "POST /orders"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration[0].id}"
 }
 
 resource "aws_lambda_permission" "api_gw_permission" {
+  count         = var.enable_api_gateway ? 1 : 0
   statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.order_ingest.function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+  source_arn    = "${aws_apigatewayv2_api.http_api[0].execution_arn}/*/*"
 }
+

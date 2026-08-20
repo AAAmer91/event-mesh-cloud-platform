@@ -45,6 +45,12 @@ variable "s3_bucket_arn" {
   type        = string
 }
 
+variable "enable_api_gateway" {
+  description = "Whether to provision the API Gateway HTTP API v2 (LocalStack Community supports direct Lambda/REST API, Pro supports HTTP API v2)"
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Resource tags"
   type        = map(string)

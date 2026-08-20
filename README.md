@@ -2,11 +2,14 @@
 
 [![CI & LocalStack Integration](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/ci.yml)
 [![Lint & Security](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/lint-and-security.yml/badge.svg)](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/lint-and-security.yml)
+[![Performance & Chaos](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/scheduled-benchmark.yml/badge.svg)](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/scheduled-benchmark.yml)
+[![Release & Tagging](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/release.yml/badge.svg)](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/release.yml)
 [![Terraform](https://img.shields.io/badge/Terraform-1.8+-7B42BC?style=flat-square&logo=terraform&logoColor=white)](https://www.terraform.io/)
 [![AWS Serverless](https://img.shields.io/badge/AWS-Serverless-232F3E?style=flat-square&logo=amazonwebservices&logoColor=FF9900)](https://aws.amazon.com/)
 [![LocalStack](https://img.shields.io/badge/LocalStack-v3.2-0055FF?style=flat-square&logo=docker&logoColor=white)](https://www.localstack.cloud/)
 [![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+
 
 > A production-ready, event-driven AWS platform reference architecture built with **Terraform**, **Python/FastAPI serverless handlers**, **SNS/SQS event fanout**, **DynamoDB idempotency**, and **LocalStack testcontainers** running in automated GitHub Actions CI pipelines.
 

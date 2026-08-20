@@ -69,6 +69,7 @@ module "compute" {
 
   prefix              = var.prefix
   environment         = "local"
+  enable_api_gateway  = false # LocalStack Community optimization (apigatewayv2 is a Pro feature)
   sns_topic_arn       = module.messaging.sns_topic_arn
   order_queue_arn     = module.messaging.order_queue_arn
   dlq_arn             = module.messaging.dlq_arn

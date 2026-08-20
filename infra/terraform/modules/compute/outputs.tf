@@ -1,7 +1,8 @@
 output "api_endpoint" {
   description = "Base URL of the API Gateway HTTP API"
-  value       = aws_apigatewayv2_stage.default_stage.invoke_url
+  value       = var.enable_api_gateway ? try(aws_apigatewayv2_stage.default_stage[0].invoke_url, "") : "Direct-Lambda-Invocation (LocalStack Community Mode)"
 }
+
 
 output "order_ingest_lambda_arn" {
   description = "ARN of the Order Ingest Lambda"

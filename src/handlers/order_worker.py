@@ -29,8 +29,9 @@ def parse_sqs_body(record_body: str) -> dict[str, Any]:
     data = json.loads(record_body, parse_float=Decimal)
     if isinstance(data, dict) and "TopicArn" in data and "Message" in data:
         # Message was routed through SNS -> SQS fanout
-        return json.loads(data["Message"], parse_float=Decimal)
-    return data
+        unwrapped: dict[str, Any] = json.loads(data["Message"], parse_float=Decimal)
+        return unwrapped
+    return dict(data) if isinstance(data, dict) else {}
 
 
 def process_single_order(order_data: dict[str, Any], table: Any) -> bool:
