@@ -92,7 +92,8 @@ jobs:
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: test
         run: |
-          python -m pytest tests/integration -v
+          python -m pytest tests/integration -v --tb=short -s
+
 
       - name: Generate GitHub Actions Step Summary
         if: always()

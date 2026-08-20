@@ -11,8 +11,6 @@ services:
       - SERVICES=s3,sqs,sns,dynamodb,lambda,apigateway,cloudwatch,logs,iam
       - AWS_DEFAULT_REGION=us-east-1
       - DOCKER_HOST=unix:///var/run/docker.sock
-      - LOCALSTACK_HOST=localhost:4566
-      - SQS_ENDPOINT_STRATEGY=path
       - DEBUG=0
       - PERSISTENCE=0
     volumes:
