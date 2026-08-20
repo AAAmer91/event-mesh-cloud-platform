@@ -102,15 +102,47 @@ resource "aws_iam_role_policy_attachment" "lambda_policy_attach" {
 }
 
 # ==============================================================================
-# Placeholder / Packaged Lambda Source
+# Packaged Lambda Source Bundle
 # ==============================================================================
-data "archive_file" "lambda_dummy_zip" {
+data "archive_file" "lambda_bundle_zip" {
   type        = "zip"
-  output_path = "${path.module}/lambda_dummy.zip"
+  output_path = "${path.module}/lambda_bundle.zip"
 
   source {
-    content  = "def handler(event, context): return {'statusCode': 200}"
-    filename = "handler.py"
+    content  = file("${path.module}/../../../../src/handlers/order_ingest.py")
+    filename = "src/handlers/order_ingest.py"
+  }
+  source {
+    content  = file("${path.module}/../../../../src/handlers/order_worker.py")
+    filename = "src/handlers/order_worker.py"
+  }
+  source {
+    content  = file("${path.module}/../../../../src/handlers/s3_processor.py")
+    filename = "src/handlers/s3_processor.py"
+  }
+  source {
+    content  = file("${path.module}/../../../../src/core/logger.py")
+    filename = "src/core/logger.py"
+  }
+  source {
+    content  = file("${path.module}/../../../../src/core/metrics.py")
+    filename = "src/core/metrics.py"
+  }
+  source {
+    content  = file("${path.module}/../../../../src/core/tracing.py")
+    filename = "src/core/tracing.py"
+  }
+  source {
+    content  = ""
+    filename = "src/__init__.py"
+  }
+  source {
+    content  = ""
+    filename = "src/core/__init__.py"
+  }
+  source {
+    content  = ""
+    filename = "src/handlers/__init__.py"
   }
 }
 
@@ -125,8 +157,8 @@ resource "aws_lambda_function" "order_ingest" {
   timeout       = 15
   memory_size   = 256
 
-  filename         = data.archive_file.lambda_dummy_zip.output_path
-  source_code_hash = data.archive_file.lambda_dummy_zip.output_base64sha256
+  filename         = data.archive_file.lambda_bundle_zip.output_path
+  source_code_hash = data.archive_file.lambda_bundle_zip.output_base64sha256
 
   environment {
     variables = {
@@ -153,8 +185,8 @@ resource "aws_lambda_function" "order_worker" {
   timeout       = 30
   memory_size   = 256
 
-  filename         = data.archive_file.lambda_dummy_zip.output_path
-  source_code_hash = data.archive_file.lambda_dummy_zip.output_base64sha256
+  filename         = data.archive_file.lambda_bundle_zip.output_path
+  source_code_hash = data.archive_file.lambda_bundle_zip.output_base64sha256
 
   environment {
     variables = {
@@ -190,8 +222,9 @@ resource "aws_lambda_function" "s3_processor" {
   timeout       = 60
   memory_size   = 512
 
-  filename         = data.archive_file.lambda_dummy_zip.output_path
-  source_code_hash = data.archive_file.lambda_dummy_zip.output_base64sha256
+  filename         = data.archive_file.lambda_bundle_zip.output_path
+  source_code_hash = data.archive_file.lambda_bundle_zip.output_base64sha256
+
 
   environment {
     variables = {
