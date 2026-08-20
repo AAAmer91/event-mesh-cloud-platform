@@ -1,4 +1,4 @@
-.PHONY: help up down logs tf-init tf-apply tf-destroy test-unit test-integration test lint format clean
+.PHONY: help up down logs tf-init tf-apply tf-destroy test-unit test-integration test lint format clean chaos bench
 
 help:
 	@echo "Event-Mesh Cloud Platform Commands:"
@@ -11,6 +11,8 @@ help:
 	@echo "  make test-unit        - Run fast unit tests"
 	@echo "  make test-integration - Run end-to-end integration tests against LocalStack"
 	@echo "  make test             - Run all tests with coverage report"
+	@echo "  make chaos            - Run Chaos & Resilience simulation against LocalStack"
+	@echo "  make bench            - Run Ingestion Load Benchmark against LocalStack"
 	@echo "  make lint             - Run Ruff and formatting checks"
 	@echo "  make format           - Auto-format code with Ruff"
 	@echo "  make clean            - Remove cache and temporary files"
@@ -44,13 +46,19 @@ test-integration:
 test:
 	pytest tests/ --cov=src --cov-report=term-missing --cov-report=html
 
+chaos:
+	python scripts/chaos_test.py --orders 100 --poison-ratio 0.10
+
+bench:
+	python scripts/benchmark_events.py --requests 100 --concurrency 10
+
 lint:
-	ruff check src/ tests/
-	ruff format --check src/ tests/
+	ruff check src/ tests/ scripts/
+	ruff format --check src/ tests/ scripts/
 
 format:
-	ruff format src/ tests/
-	ruff check --fix src/ tests/
+	ruff format src/ tests/ scripts/
+	ruff check --fix src/ tests/ scripts/
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
