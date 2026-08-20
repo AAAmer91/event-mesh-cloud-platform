@@ -106,30 +106,30 @@ resource "aws_iam_role_policy_attachment" "lambda_policy_attach" {
 # ==============================================================================
 data "archive_file" "lambda_bundle_zip" {
   type        = "zip"
-  output_path = "${path.module}/lambda_bundle.zip"
+  output_path = "${path.root}/lambda_bundle.zip"
 
   source {
-    content  = file("${path.module}/../../../../src/handlers/order_ingest.py")
+    content  = file("${path.root}/../../../../src/handlers/order_ingest.py")
     filename = "src/handlers/order_ingest.py"
   }
   source {
-    content  = file("${path.module}/../../../../src/handlers/order_worker.py")
+    content  = file("${path.root}/../../../../src/handlers/order_worker.py")
     filename = "src/handlers/order_worker.py"
   }
   source {
-    content  = file("${path.module}/../../../../src/handlers/s3_processor.py")
+    content  = file("${path.root}/../../../../src/handlers/s3_processor.py")
     filename = "src/handlers/s3_processor.py"
   }
   source {
-    content  = file("${path.module}/../../../../src/core/logger.py")
+    content  = file("${path.root}/../../../../src/core/logger.py")
     filename = "src/core/logger.py"
   }
   source {
-    content  = file("${path.module}/../../../../src/core/metrics.py")
+    content  = file("${path.root}/../../../../src/core/metrics.py")
     filename = "src/core/metrics.py"
   }
   source {
-    content  = file("${path.module}/../../../../src/core/tracing.py")
+    content  = file("${path.root}/../../../../src/core/tracing.py")
     filename = "src/core/tracing.py"
   }
   source {
