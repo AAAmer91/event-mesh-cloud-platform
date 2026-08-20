@@ -6,7 +6,6 @@ import os
 from typing import Any
 
 import boto3
-from botocore.exceptions import ClientError
 
 from src.core.logger import get_logger
 
@@ -53,7 +52,7 @@ class CloudWatchMetrics:
                 MetricData=[metric_data],
             )
             return True
-        except ClientError as e:
+        except Exception as e:
             logger.warning(
                 f"Failed to publish metric {metric_name} to CloudWatch: {e}",
                 extra={"extra_data": {"metric": metric_name, "error": str(e)}},

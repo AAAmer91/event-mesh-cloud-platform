@@ -47,12 +47,14 @@ def test_end_to_end_order_flow(localstack_endpoint):
     ingest_res = order_ingest.handler(ingest_event)
     assert ingest_res["statusCode"] == 201
 
-    # Step 2: Poll SQS for message delivered via SNS fanout
-    queue_url_res = sqs.get_queue_url(QueueName="event-mesh-local-order-events-queue")
-    queue_url = queue_url_res["QueueUrl"]
+    # Step 2: Resolve Queue URL and Poll SQS for message delivered via SNS fanout
+    raw_url = sqs.get_queue_url(QueueName="event-mesh-local-order-events-queue")["QueueUrl"]
+    # Normalize queue URL for localhost endpoint compatibility
+    path_suffix = raw_url.split("/", 3)[-1] if raw_url.count("/") >= 3 else raw_url
+    queue_url = f"{localstack_endpoint.rstrip('/')}/{path_suffix}"
 
     messages = []
-    for _ in range(12):
+    for _ in range(15):
         recv_res = sqs.receive_message(
             QueueUrl=queue_url,
             MaxNumberOfMessages=1,
