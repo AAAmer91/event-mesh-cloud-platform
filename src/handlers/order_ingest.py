@@ -6,9 +6,11 @@ import json
 import os
 import uuid
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Any
 
 import boto3
+from botocore.config import Config
 from pydantic import BaseModel, Field, ValidationError
 
 from src.core.logger import get_logger
@@ -38,10 +40,15 @@ class OrderPayload(BaseModel):
     simulate_error: bool = False
 
 
+@lru_cache(maxsize=1)
 def get_sns_client() -> Any:
-    """Returns a boto3 SNS client configured with local endpoint if available."""
+    """Returns a cached boto3 SNS client with connection pooling."""
     endpoint_url = os.getenv("AWS_ENDPOINT_URL")
-    return boto3.client("sns", endpoint_url=endpoint_url)
+    config = Config(
+        max_pool_connections=200,
+        retries={"max_attempts": 2, "mode": "standard"},
+    )
+    return boto3.client("sns", endpoint_url=endpoint_url, config=config)
 
 
 def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:

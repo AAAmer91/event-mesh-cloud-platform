@@ -26,7 +26,10 @@ class CloudWatchMetrics:
         if self._client is None:
             endpoint_url = os.getenv("AWS_ENDPOINT_URL")
             config = Config(
-                retries={"max_attempts": 0, "mode": "standard"}, connect_timeout=1, read_timeout=1
+                max_pool_connections=200,
+                retries={"max_attempts": 0, "mode": "standard"},
+                connect_timeout=1,
+                read_timeout=1,
             )
             self._client = boto3.client(
                 "cloudwatch", endpoint_url=endpoint_url, region_name="us-east-1", config=config

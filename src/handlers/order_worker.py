@@ -6,9 +6,11 @@ import json
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import lru_cache
 from typing import Any
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from src.core.logger import get_logger
@@ -18,10 +20,15 @@ logger = get_logger("order-worker")
 metrics = CloudWatchMetrics()
 
 
+@lru_cache(maxsize=1)
 def get_dynamodb_resource() -> Any:
-    """Returns a boto3 DynamoDB resource configured with local endpoint if available."""
+    """Returns a cached boto3 DynamoDB resource with connection pooling."""
     endpoint_url = os.getenv("AWS_ENDPOINT_URL")
-    return boto3.resource("dynamodb", endpoint_url=endpoint_url)
+    config = Config(
+        max_pool_connections=200,
+        retries={"max_attempts": 2, "mode": "standard"},
+    )
+    return boto3.resource("dynamodb", endpoint_url=endpoint_url, config=config)
 
 
 def parse_sqs_body(record_body: str) -> dict[str, Any]:
