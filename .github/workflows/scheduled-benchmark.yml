@@ -13,6 +13,16 @@ on:
         required: true
         default: "20"
         type: string
+      chaos_count:
+        description: "Number of orders to chaos test"
+        required: false
+        default: "50"
+        type: string
+      chaos_ratio:
+        description: "Poison-pill ratio (e.g. 0.2 for 20%)"
+        required: false
+        default: "0.2"
+        type: string
   schedule:
     # Run nightly at midnight UTC
     - cron: "0 0 * * *"
@@ -91,7 +101,8 @@ jobs:
           DYNAMODB_TABLE_NAME: event-mesh-local-orders-table
         run: |
           echo "Executing Chaos & Fault Isolation Verification..."
-          python scripts/chaos_test.py --count 50 --chaos-ratio 0.2 --output chaos_results.json
+          python scripts/chaos_test.py --count ${{ github.event.inputs.chaos_count || '50' }} --chaos-ratio ${{ github.event.inputs.chaos_ratio || '0.2' }} --output chaos_results.json
+
 
       - name: Generate & Publish Executive Platform Dashboard
         if: always()

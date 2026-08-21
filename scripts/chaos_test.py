@@ -16,6 +16,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import boto3
 
@@ -26,6 +27,22 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from src.handlers import order_ingest, order_worker
+
+
+def drain_queue(sqs: Any, queue_url: str) -> None:
+    """Purges or drains all pending messages from the specified SQS queue."""
+    try:
+        sqs.purge_queue(QueueUrl=queue_url)
+    except Exception:
+        for _ in range(50):
+            d_recv = sqs.receive_message(
+                QueueUrl=queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=0
+            )
+            d_msgs = d_recv.get("Messages", [])
+            if not d_msgs:
+                break
+            for dm in d_msgs:
+                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=dm["ReceiptHandle"])
 
 
 def run_chaos_simulation(
@@ -54,6 +71,11 @@ def run_chaos_simulation(
     order_queue_url = sqs.get_queue_url(QueueName=order_queue_name)["QueueUrl"]
     dlq_url = sqs.get_queue_url(QueueName=dlq_name)["QueueUrl"]
     table = dynamodb.Table(table_name)
+
+    # 0. Clean / drain queues prior to simulation to eliminate leftover benchmark backlogs
+    print("🧹 Cleaning queues prior to chaos simulation...")
+    drain_queue(sqs, order_queue_url)
+    drain_queue(sqs, dlq_url)
 
     # 1. Generate mixed workload
     batch_run_id = uuid.uuid4().hex[:6]
@@ -97,8 +119,12 @@ def run_chaos_simulation(
     processed_in_worker = 0
     failed_in_worker = 0
 
-    # Poll and process messages
-    for _ in range(30):
+    # Poll and process messages until all injected orders are accounted for
+    empty_attempts = 0
+    max_empty_attempts = 10
+    while (processed_in_worker + failed_in_worker < total_orders) and (
+        empty_attempts < max_empty_attempts
+    ):
         recv = sqs.receive_message(
             QueueUrl=order_queue_url,
             MaxNumberOfMessages=10,
@@ -106,8 +132,11 @@ def run_chaos_simulation(
         )
         msgs = recv.get("Messages", [])
         if not msgs:
-            break
+            empty_attempts += 1
+            time.sleep(0.5)
+            continue
 
+        empty_attempts = 0
         event = {"Records": [{"messageId": m["MessageId"], "body": m["Body"]} for m in msgs]}
         worker_res = order_worker.handler(event)
         failed_ids = {f["itemIdentifier"] for f in worker_res.get("batchItemFailures", [])}
