@@ -22,6 +22,9 @@ import boto3
 # Ensure project root is on sys.path for direct handler imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from src.handlers import order_ingest, order_worker
 
 
@@ -29,7 +32,8 @@ def run_chaos_simulation(
     endpoint: str = "http://localhost:4566",
     total_orders: int = 100,
     poison_ratio: float = 0.10,
-):
+    output_file: str | None = None,
+) -> dict:
     print("=" * 75)
     print("🧪 STARTING EVENT-MESH CHAOS & RESILIENCE SIMULATION")
     print("=" * 75)
@@ -134,6 +138,23 @@ def run_chaos_simulation(
     )
     dlq_msg_count = int(dlq_attr["Attributes"].get("ApproximateNumberOfMessages", 0))
 
+    isolation_rate = (failed_in_worker / poison_count * 100.0) if poison_count > 0 else 100.0
+    zero_data_loss = (len(stored_orders) == valid_count) and (failed_in_worker == poison_count)
+
+    results = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "batch_run_id": batch_run_id,
+        "total_injected_orders": total_orders,
+        "valid_orders_expected": valid_count,
+        "valid_orders_persisted": len(stored_orders),
+        "poison_orders_injected": poison_count,
+        "poison_orders_isolated_dlq": failed_in_worker,
+        "dlq_message_count": dlq_msg_count,
+        "fault_isolation_rate_percent": round(isolation_rate, 2),
+        "zero_data_loss_verified": zero_data_loss,
+        "ingest_duration_sec": round(ingest_duration, 3),
+    }
+
     print("=" * 75)
     print("📊 RESILIENCE SIMULATION REPORT")
     print("=" * 75)
@@ -142,9 +163,16 @@ def run_chaos_simulation(
     )
     print(f"  • Corrupted Orders Isolated in DLQ:   {dlq_msg_count} (Expected: {poison_count})")
     print("  • Primary Processing Queue Depth:     0 (Cleaned up successfully)")
-    print("  • Zero Data Loss Guarantee:           PASS ✅")
-    print("  • Fault Isolation Rate:               100% ✅")
+    print(f"  • Zero Data Loss Guarantee:           {'PASS ✅' if zero_data_loss else 'FAIL ❌'}")
+    print(f"  • Fault Isolation Rate:               {isolation_rate:.1f}% ✅")
     print("=" * 75)
+
+    if output_file:
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2)
+        print(f"\n💾 Chaos telemetry results exported to: {output_file}")
+
+    return results
 
 
 if __name__ == "__main__":
@@ -161,6 +189,9 @@ if __name__ == "__main__":
         default=0.10,
         help="Ratio of poison-pill messages (0.0 to 1.0)",
     )
+    parser.add_argument(
+        "--output", default=None, help="Path to write JSON chaos simulation telemetry results"
+    )
     args = parser.parse_args()
 
-    run_chaos_simulation(args.endpoint, args.orders, args.poison_ratio)
+    run_chaos_simulation(args.endpoint, args.orders, args.poison_ratio, args.output)

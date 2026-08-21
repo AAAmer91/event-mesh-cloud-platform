@@ -12,6 +12,9 @@ from pathlib import Path
 # Ensure project root is on sys.path for direct handler imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from src.handlers import order_ingest
 
 
@@ -68,12 +71,27 @@ def send_order(endpoint: str, order: dict, direct: bool = False) -> tuple[bool, 
             return (False, latency)
 
 
+def calculate_percentile(sorted_data: list[float], percentile: float) -> float:
+    """Calculate the given percentile from sorted data."""
+    if not sorted_data:
+        return 0.0
+    k = (len(sorted_data) - 1) * percentile
+    f = int(k)
+    c = min(f + 1, len(sorted_data) - 1)
+    if f == c:
+        return sorted_data[int(k)]
+    d0 = sorted_data[f] * (c - k)
+    d1 = sorted_data[c] * (k - f)
+    return d0 + d1
+
+
 def run_benchmark(
     endpoint: str = "http://localhost:4566",
     total_requests: int = 50,
     concurrency: int = 5,
     direct: bool = False,
-):
+    output_file: str | None = None,
+) -> dict:
     print(
         f"🚀 Starting Event Ingestion Benchmark: {total_requests} requests (concurrency: {concurrency})"
     )
@@ -94,18 +112,57 @@ def run_benchmark(
 
     wall_duration = time.perf_counter() - wall_start
     throughput = total_requests / wall_duration if wall_duration > 0 else 0
+    sorted_ms = sorted([lat * 1000.0 for lat in latencies])
+
+    avg_ms = (sum(latencies) / len(latencies)) * 1000.0 if latencies else 0.0
+    min_ms = min(sorted_ms) if sorted_ms else 0.0
+    max_ms = max(sorted_ms) if sorted_ms else 0.0
+    p50_ms = calculate_percentile(sorted_ms, 0.50)
+    p90_ms = calculate_percentile(sorted_ms, 0.90)
+    p95_ms = calculate_percentile(sorted_ms, 0.95)
+    p99_ms = calculate_percentile(sorted_ms, 0.99)
+    success_rate = (success_count / total_requests) * 100 if total_requests > 0 else 0.0
+
+    results = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "target_endpoint": endpoint,
+        "direct_invocation": direct,
+        "total_requests": total_requests,
+        "concurrency": concurrency,
+        "successful_requests": success_count,
+        "failed_requests": total_requests - success_count,
+        "success_rate_percent": round(success_rate, 2),
+        "total_duration_sec": round(wall_duration, 3),
+        "throughput_req_per_sec": round(throughput, 2),
+        "latency_ms": {
+            "avg": round(avg_ms, 2),
+            "min": round(min_ms, 2),
+            "p50": round(p50_ms, 2),
+            "p90": round(p90_ms, 2),
+            "p95": round(p95_ms, 2),
+            "p99": round(p99_ms, 2),
+            "max": round(max_ms, 2),
+        },
+    }
 
     print("📊 Benchmark Results:")
     print(f"  • Total Requests:  {total_requests}")
-    print(
-        f"  • Success Rate:    {success_count}/{total_requests} ({(success_count / total_requests) * 100:.1f}%)"
-    )
+    print(f"  • Success Rate:    {success_count}/{total_requests} ({success_rate:.1f}%)")
     print(f"  • Total Time:      {wall_duration:.2f}s")
     print(f"  • Throughput:      {throughput:.1f} req/sec")
-    if latencies:
-        print(f"  • Avg Latency:     {(sum(latencies) / len(latencies)) * 1000:.1f} ms")
-        print(f"  • Min Latency:     {min(latencies) * 1000:.1f} ms")
-        print(f"  • Max Latency:     {max(latencies) * 1000:.1f} ms")
+    print(f"  • Latency Avg:     {avg_ms:.1f} ms")
+    print(f"  • Latency p50:     {p50_ms:.1f} ms")
+    print(f"  • Latency p90:     {p90_ms:.1f} ms")
+    print(f"  • Latency p95:     {p95_ms:.1f} ms")
+    print(f"  • Latency p99:     {p99_ms:.1f} ms")
+    print(f"  • Latency Max:     {max_ms:.1f} ms")
+
+    if output_file:
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2)
+        print(f"\n💾 Telemetry results exported to: {output_file}")
+
+    return results
 
 
 if __name__ == "__main__":
@@ -132,7 +189,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--direct", action="store_true", help="Direct in-process serverless handler invocation"
     )
+    parser.add_argument(
+        "--output", default=None, help="Path to write JSON benchmark telemetry results"
+    )
     args = parser.parse_args()
 
     os.environ["AWS_ENDPOINT_URL"] = os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566")
-    run_benchmark(args.endpoint, args.requests, args.concurrency, args.direct)
+    run_benchmark(args.endpoint, args.requests, args.concurrency, args.direct, args.output)

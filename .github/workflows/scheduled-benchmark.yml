@@ -17,6 +17,10 @@ on:
     # Run nightly at midnight UTC
     - cron: "0 0 * * *"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   benchmark-and-chaos:
     name: Load & Chaos Testing
@@ -74,7 +78,7 @@ jobs:
           SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:event-mesh-local-order-events-topic
         run: |
           echo "Executing Event Mesh Load Benchmark..."
-          python scripts/benchmark_events.py --total ${{ github.event.inputs.event_count || '100' }} --batch ${{ github.event.inputs.batch_size || '20' }} --direct
+          python scripts/benchmark_events.py --total ${{ github.event.inputs.event_count || '100' }} --batch ${{ github.event.inputs.batch_size || '20' }} --direct --output benchmark_results.json
 
       - name: Run Chaos Engineering & Poison-Pill Simulation
         env:
@@ -87,23 +91,25 @@ jobs:
           DYNAMODB_TABLE_NAME: event-mesh-local-orders-table
         run: |
           echo "Executing Chaos & Fault Isolation Verification..."
-          python scripts/chaos_test.py --count 50 --chaos-ratio 0.2
+          python scripts/chaos_test.py --count 50 --chaos-ratio 0.2 --output chaos_results.json
 
-
-      - name: Publish Performance & Resilience Dashboard
+      - name: Generate & Publish Executive Platform Dashboard
         if: always()
         run: |
-          echo "## ⚡ Cloud Platform Performance & Chaos Benchmark Dashboard" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Benchmark Suite | Ingestion Target | Throughput / SLA | Isolation Ratio |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
-          echo "| **High-Concurrency Load Test** | SNS Fanout $\to$ SQS Buffer | > 100 events/sec | N/A (100% Ingested) |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Chaos Fault Injection (20% Poison)** | Order Worker Consumer | Sub-15ms processing | 100% DLQ Isolation |" >> $GITHUB_STEP_SUMMARY
-          echo "| **S3 Batch Bulk Payload Stream** | S3 Ingestion Bucket | Zero Data Loss | Idempotent DynamoDB Writes |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> 📊 **All Cloud SLAs and Resilience Gates Passed Successfully.**" >> $GITHUB_STEP_SUMMARY
+          python scripts/generate_summary.py benchmark_results.json chaos_results.json
+
+      - name: Upload Benchmark & Chaos Telemetry Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-and-chaos-telemetry
+          path: |
+            benchmark_results.json
+            chaos_results.json
+          retention-days: 14
 
       - name: Teardown LocalStack
         if: always()
         run: |
           docker compose down -v
+
