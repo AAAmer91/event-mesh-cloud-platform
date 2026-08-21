@@ -35,6 +35,7 @@ class OrderPayload(BaseModel):
     currency: str = "USD"
     order_id: str | None = None
     trace_id: str | None = None
+    simulate_error: bool = False
 
 
 def get_sns_client() -> Any:
@@ -92,6 +93,7 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         "status": "PENDING",
         "created_at": created_at,
         "trace_id": trace_id,
+        "simulate_error": order.simulate_error,
     }
 
     # Publish to SNS Event Mesh Topic
