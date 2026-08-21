@@ -54,9 +54,11 @@ flowchart LR
 * **🔄 Partial Batch Failure Isolation:** Configured with `ReportBatchItemFailures` so failed queue items are isolated and redriven without stalling the batch.
 * **📦 Dead Letter Queue (DLQ) & Alerting:** Automatic message quarantine after 3 failed delivery attempts paired with CloudWatch depth alarms.
 * **🧪 Chaos & Resilience Simulation:** Built-in chaos testing tool (`make chaos`) validating zero data loss under concurrent burst traffic and poisoned message injections.
+* **⏱️ High-Precision Performance Benchmarking:** Calculates $p50, p90, p95, p99$ latency percentiles and exports structured JSON telemetry.
 * **🔬 Distributed Trace Correlation:** End-to-end trace context propagation across HTTP headers, SNS MessageAttributes, and CloudWatch structured JSON logs.
+* **🔒 DevSecOps Quality Gate:** AST static security vulnerability scanning (Bandit), strict PEP 484 static typing (Mypy), and Ruff linting.
 * **🧪 100% Local Cloud Simulation:** Fully provisioned and tested locally against **LocalStack v3** via Docker Compose—zero cloud bills.
-* **🚀 Production-Grade CI/CD:** Complete GitHub Actions pipeline executing matrix unit tests across Python 3.11/3.12, LocalStack integration tests, and rich Markdown step summaries.
+* **🚀 Production-Grade CI/CD & Dashboards:** 5 automated GitHub Actions workflows with rich native Mermaid Step Summaries, artifact uploads, and PR architecture review bots.
 
 ---
 
@@ -66,8 +68,10 @@ flowchart LR
 event-mesh-cloud-platform/
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                 # LocalStack container + Terraform apply + Step Summary Dashboard
-│   │   ├── lint-and-security.yml  # TFLint, Terraform fmt, Ruff linter
+│   │   ├── ci.yml                 # LocalStack container + Terraform apply + Coverage Artifacts
+│   │   ├── lint-and-security.yml  # Bandit SAST, Mypy type-checking, Ruff, Terraform fmt
+│   │   ├── scheduled-benchmark.yml# Nightly load benchmark & chaos resilience dashboard
+│   │   ├── pr-automation.yml      # PR Architecture gatekeeper & automated review bot
 │   │   └── release.yml            # Semantic release and GitHub release tagging
 │   ├── ISSUE_TEMPLATE/            # Enterprise GitHub Bug & Feature form templates
 │   └── pull_request_template.md
@@ -85,8 +89,9 @@ event-mesh-cloud-platform/
 │           ├── storage/           # S3 bucket with notifications & DynamoDB table [README.md]
 │           └── observability/     # CloudWatch log groups & DLQ metric alarms [README.md]
 ├── scripts/
-│   ├── benchmark_events.py        # High-throughput load benchmarking utility
-│   └── chaos_test.py              # Chaos & poison-pill resilience simulation tool
+│   ├── benchmark_events.py        # High-throughput load benchmarking & latency percentiles
+│   ├── chaos_test.py              # Chaos & poison-pill resilience simulation tool
+│   └── generate_summary.py        # Executive GitHub Actions Step Summary & Mermaid renderer
 ├── src/
 │   ├── core/
 │   │   ├── logger.py              # Structured JSON logging
