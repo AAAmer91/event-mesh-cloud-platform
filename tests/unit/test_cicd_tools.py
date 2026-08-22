@@ -8,9 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from scripts.benchmark_events import benchmark_succeeded
+from scripts.benchmark_events import benchmark_succeeded, run_benchmark
 from scripts.build_lambda import create_deterministic_zip, validate_lambda_archive
-from scripts.chaos_test import _is_order_from_batch, chaos_succeeded
+from scripts.chaos_test import (
+    _is_order_from_batch,
+    chaos_succeeded,
+    wait_for_chaos_outcome,
+    wait_for_queue_quiescence,
+)
 from scripts.generate_summary import generate_dashboard
 from scripts.release_version import determine_bump, next_version
 from scripts.render_performance_site import append_history, render_site
@@ -96,6 +101,22 @@ def test_benchmark_cli_gate_rejects_failed_requests() -> None:
     assert benchmark_succeeded(result) is False
 
 
+def test_benchmark_warms_dependency_path_outside_measured_requests(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def successful_send(endpoint: str, order: dict, direct: bool = False) -> tuple[bool, float]:
+        calls.append(order["order_id"])
+        return True, 0.001
+
+    monkeypatch.setattr("scripts.benchmark_events.send_order", successful_send)
+
+    result = run_benchmark(total_requests=2, concurrency=1, direct=True)
+
+    assert len(calls) == 3
+    assert result["total_requests"] == 2
+    assert result["successful_requests"] == 2
+
+
 def test_chaos_cli_gate_requires_zero_data_loss() -> None:
     result = _passing_chaos()
     result["zero_data_loss_verified"] = False
@@ -110,6 +131,52 @@ def test_batch_matching_ignores_non_string_order_ids(malformed_order_id: object)
 
 def test_batch_matching_accepts_a_string_order_id_from_the_batch() -> None:
     assert _is_order_from_batch("chaos-test-123", "chaos-test") is True
+
+
+def test_queue_quiescence_waits_for_visible_and_inflight_messages() -> None:
+    class FakeSqs:
+        def __init__(self) -> None:
+            self.depths = iter([(2, 0), (0, 1), (0, 0), (0, 0)])
+
+        def get_queue_attributes(self, **_kwargs) -> dict:
+            visible, inflight = next(self.depths)
+            return {
+                "Attributes": {
+                    "ApproximateNumberOfMessages": str(visible),
+                    "ApproximateNumberOfMessagesNotVisible": str(inflight),
+                }
+            }
+
+    assert wait_for_queue_quiescence(
+        FakeSqs(), "queue-url", timeout_seconds=1.0, poll_interval=0.0, stable_polls=2
+    )
+
+
+def test_chaos_outcome_is_observed_from_deployed_storage_and_dlq() -> None:
+    class FakeTable:
+        def scan(self) -> dict:
+            return {
+                "Items": [
+                    {"order_id": "ord_chaos_batch1_001"},
+                    {"order_id": "ord_chaos_batch1_002"},
+                    {"order_id": "ord_bench_unrelated"},
+                ]
+            }
+
+    class FakeSqs:
+        def get_queue_attributes(self, **_kwargs) -> dict:
+            return {"Attributes": {"ApproximateNumberOfMessages": "1"}}
+
+    assert wait_for_chaos_outcome(
+        FakeTable(),
+        FakeSqs(),
+        "dlq-url",
+        "batch1",
+        valid_count=2,
+        poison_count=1,
+        timeout_seconds=1.0,
+        poll_interval=0.0,
+    ) == (2, 1)
 
 
 def test_validator_cli_writes_report_and_returns_failure(tmp_path: Path) -> None:

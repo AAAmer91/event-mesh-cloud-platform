@@ -98,6 +98,11 @@ def run_benchmark(
     print(f"🔗 Target Endpoint: {endpoint} (Direct Handler: {direct})\n")
 
     orders = [generate_mock_order(i) for i in range(total_requests)]
+    warmup_order = generate_mock_order(total_requests)
+    warmup_succeeded, _ = send_order(endpoint, warmup_order, direct)
+    if not warmup_succeeded:
+        raise RuntimeError("Benchmark warm-up request failed")
+
     latencies: list[float] = []
     success_count = 0
 

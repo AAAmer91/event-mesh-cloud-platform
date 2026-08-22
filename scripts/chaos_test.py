@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from src.handlers import order_ingest, order_worker
+from src.handlers import order_ingest
 
 
 def _is_order_from_batch(order_id: object, batch_run_id: str) -> bool:
@@ -35,19 +35,104 @@ def _is_order_from_batch(order_id: object, batch_run_id: str) -> bool:
 
 
 def drain_queue(sqs: Any, queue_url: str) -> None:
-    """Purges or drains all pending messages from the specified SQS queue."""
-    try:
-        sqs.purge_queue(QueueUrl=queue_url)
-    except Exception:
-        for _ in range(50):
-            d_recv = sqs.receive_message(
-                QueueUrl=queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=0
+    """Drain visible messages without an asynchronous PurgeQueue race window."""
+    empty_polls = 0
+    while empty_polls < 3:
+        response = sqs.receive_message(
+            QueueUrl=queue_url,
+            MaxNumberOfMessages=10,
+            WaitTimeSeconds=1,
+        )
+        messages = response.get("Messages", [])
+        if not messages:
+            empty_polls += 1
+            continue
+        empty_polls = 0
+        for message in messages:
+            sqs.delete_message(
+                QueueUrl=queue_url,
+                ReceiptHandle=message["ReceiptHandle"],
             )
-            d_msgs = d_recv.get("Messages", [])
-            if not d_msgs:
-                break
-            for dm in d_msgs:
-                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=dm["ReceiptHandle"])
+
+
+def wait_for_queue_quiescence(
+    sqs: Any,
+    queue_url: str,
+    *,
+    timeout_seconds: float = 60.0,
+    poll_interval: float = 1.0,
+    stable_polls: int = 3,
+) -> bool:
+    """Wait until a queue has no visible, in-flight, or delayed messages."""
+    deadline = time.monotonic() + timeout_seconds
+    consecutive_empty = 0
+
+    while True:
+        response = sqs.get_queue_attributes(
+            QueueUrl=queue_url,
+            AttributeNames=[
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesNotVisible",
+                "ApproximateNumberOfMessagesDelayed",
+            ],
+        )
+        attributes = response.get("Attributes", {})
+        depth = sum(
+            int(attributes.get(name, 0))
+            for name in (
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesNotVisible",
+                "ApproximateNumberOfMessagesDelayed",
+            )
+        )
+        consecutive_empty = consecutive_empty + 1 if depth == 0 else 0
+        if consecutive_empty >= stable_polls:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll_interval)
+
+
+def wait_for_chaos_outcome(
+    table: Any,
+    sqs: Any,
+    dlq_url: str,
+    batch_run_id: str,
+    *,
+    valid_count: int,
+    poison_count: int,
+    timeout_seconds: float = 150.0,
+    poll_interval: float = 2.0,
+) -> tuple[int, int]:
+    """Observe deployed worker outcomes in DynamoDB and the DLQ."""
+    deadline = time.monotonic() + timeout_seconds
+    stored_count = 0
+    dlq_count = 0
+
+    while True:
+        scan_result = table.scan()
+        stored_count = sum(
+            1
+            for item in scan_result.get("Items", [])
+            if _is_order_from_batch(item.get("order_id"), batch_run_id)
+        )
+        dlq_response = sqs.get_queue_attributes(
+            QueueUrl=dlq_url,
+            AttributeNames=[
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesNotVisible",
+            ],
+        )
+        dlq_attributes = dlq_response.get("Attributes", {})
+        dlq_count = int(dlq_attributes.get("ApproximateNumberOfMessages", 0)) + int(
+            dlq_attributes.get("ApproximateNumberOfMessagesNotVisible", 0)
+        )
+
+        if stored_count >= valid_count and dlq_count >= poison_count:
+            return stored_count, dlq_count
+        if time.monotonic() >= deadline:
+            return stored_count, dlq_count
+        time.sleep(poll_interval)
 
 
 def run_chaos_simulation(
@@ -77,9 +162,10 @@ def run_chaos_simulation(
     dlq_url = sqs.get_queue_url(QueueName=dlq_name)["QueueUrl"]
     table = dynamodb.Table(table_name)
 
-    # 0. Clean / drain queues prior to simulation to eliminate leftover benchmark backlogs
-    print("🧹 Cleaning queues prior to chaos simulation...")
-    drain_queue(sqs, order_queue_url)
+    # 0. Let the deployed worker finish the preceding benchmark before measuring chaos.
+    print("🧹 Waiting for the benchmark backlog to reach a stable empty state...")
+    if not wait_for_queue_quiescence(sqs, order_queue_url):
+        raise RuntimeError("Primary queue did not become quiescent before chaos injection")
     drain_queue(sqs, dlq_url)
 
     # 1. Generate mixed workload
@@ -119,74 +205,31 @@ def run_chaos_simulation(
         f"   ✔ Ingested {ingested_orders}/{total_orders} orders in {ingest_duration:.2f}s ({(ingested_orders / ingest_duration):.1f} ops/sec)"
     )
 
-    # 2. Simulate Worker Consuming SQS Batch with automatic redrive
-    print("\n⚙️ Step 2: Processing SQS queue batches and simulating redrive...")
-    processed_in_worker = 0
-    failed_in_worker = 0
-
-    # Poll and process messages until all injected orders are accounted for
-    empty_attempts = 0
-    max_empty_attempts = 10
-    while (processed_in_worker + failed_in_worker < total_orders) and (
-        empty_attempts < max_empty_attempts
-    ):
-        recv = sqs.receive_message(
-            QueueUrl=order_queue_url,
-            MaxNumberOfMessages=10,
-            WaitTimeSeconds=1,
-        )
-        msgs = recv.get("Messages", [])
-        if not msgs:
-            empty_attempts += 1
-            time.sleep(0.5)
-            continue
-
-        empty_attempts = 0
-        worker_event: dict[str, Any] = {
-            "Records": [{"messageId": m["MessageId"], "body": m["Body"]} for m in msgs]
-        }
-        worker_res = order_worker.handler(worker_event)
-        failed_ids = {f["itemIdentifier"] for f in worker_res.get("batchItemFailures", [])}
-
-        for m in msgs:
-            if m["MessageId"] in failed_ids:
-                failed_in_worker += 1
-                # Forward to DLQ directly in simulation
-                sqs.send_message(QueueUrl=dlq_url, MessageBody=m["Body"])
-                sqs.delete_message(QueueUrl=order_queue_url, ReceiptHandle=m["ReceiptHandle"])
-            else:
-                processed_in_worker += 1
-                sqs.delete_message(QueueUrl=order_queue_url, ReceiptHandle=m["ReceiptHandle"])
+    # 2. Observe the deployed SQS event source mapping and Lambda worker.
+    print("\n⚙️ Step 2: Observing deployed worker persistence and automatic DLQ redrive...")
+    stored_count, dlq_msg_count = wait_for_chaos_outcome(
+        table,
+        sqs,
+        dlq_url,
+        batch_run_id,
+        valid_count=valid_count,
+        poison_count=poison_count,
+    )
 
     # 3. Assertions & Verification
     print("\n🔍 Step 3: Verifying State & Fault Tolerance...")
-    time.sleep(1)
-
-    # Check DynamoDB valid records
-    scan_res = table.scan()
-    stored_orders = [
-        it
-        for it in scan_res.get("Items", [])
-        if _is_order_from_batch(it.get("order_id"), batch_run_id)
-    ]
-
-    # Check DLQ messages
-    dlq_attr = sqs.get_queue_attributes(
-        QueueUrl=dlq_url, AttributeNames=["ApproximateNumberOfMessages"]
-    )
-    dlq_msg_count = int(dlq_attr["Attributes"].get("ApproximateNumberOfMessages", 0))
-
-    isolation_rate = (failed_in_worker / poison_count * 100.0) if poison_count > 0 else 100.0
-    zero_data_loss = (len(stored_orders) == valid_count) and (failed_in_worker == poison_count)
+    isolated_count = min(dlq_msg_count, poison_count)
+    isolation_rate = (isolated_count / poison_count * 100.0) if poison_count > 0 else 100.0
+    zero_data_loss = (stored_count == valid_count) and (isolated_count == poison_count)
 
     results = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "batch_run_id": batch_run_id,
         "total_injected_orders": total_orders,
         "valid_orders_expected": valid_count,
-        "valid_orders_persisted": len(stored_orders),
+        "valid_orders_persisted": stored_count,
         "poison_orders_injected": poison_count,
-        "poison_orders_isolated_dlq": failed_in_worker,
+        "poison_orders_isolated_dlq": isolated_count,
         "dlq_message_count": dlq_msg_count,
         "fault_isolation_rate_percent": round(isolation_rate, 2),
         "zero_data_loss_verified": zero_data_loss,
@@ -196,9 +239,7 @@ def run_chaos_simulation(
     print("=" * 75)
     print("📊 RESILIENCE SIMULATION REPORT")
     print("=" * 75)
-    print(
-        f"  • Valid Orders Persisted in DynamoDB:  {len(stored_orders)} (Expected: {valid_count})"
-    )
+    print(f"  • Valid Orders Persisted in DynamoDB:  {stored_count} (Expected: {valid_count})")
     print(f"  • Corrupted Orders Isolated in DLQ:   {dlq_msg_count} (Expected: {poison_count})")
     print("  • Primary Processing Queue Depth:     0 (Cleaned up successfully)")
     print(f"  • Zero Data Loss Guarantee:           {'PASS ✅' if zero_data_loss else 'FAIL ❌'}")
