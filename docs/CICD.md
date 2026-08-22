@@ -16,7 +16,7 @@ This repository treats workflow output as release evidence. Missing telemetry, s
 | Deployment | Saved plan, GitHub deployment record, API smoke response | Protected environment |
 | Performance | Raw telemetry, baseline comparison, incident and Pages history | Scheduled/manual gate |
 
-All external actions are pinned to immutable full commit SHAs. Dependabot proposes grouped updates for Actions, Python, Terraform, and Docker.
+All external actions are pinned to immutable full commit SHAs. Dependabot proposes grouped updates for Actions, Python, Terraform, and Docker Compose.
 
 ## One-time AWS bootstrap
 
@@ -49,6 +49,8 @@ Create `dev` and `production` environments. Add these environment variables to b
 | `AWS_REGION` | Deployment region, normally `us-east-1` |
 
 For `production`, enable required reviewers, prevent self-review, and restrict deployments to `main` or release tags. Enable GitHub Pages with **GitHub Actions** as its source.
+
+In **Settings > Code security**, enable Dependency Graph. The PR dependency and license gate requires it. Until it is enabled, the workflow emits an explicit warning and continues to enforce the blocking `pip-audit` lockfile scan instead of failing for unavailable repository metadata.
 
 Configure a `main` ruleset with:
 

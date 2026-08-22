@@ -10,7 +10,7 @@ import pytest
 
 from scripts.benchmark_events import benchmark_succeeded
 from scripts.build_lambda import create_deterministic_zip, validate_lambda_archive
-from scripts.chaos_test import chaos_succeeded
+from scripts.chaos_test import _is_order_from_batch, chaos_succeeded
 from scripts.generate_summary import generate_dashboard
 from scripts.release_version import determine_bump, next_version
 from scripts.render_performance_site import append_history, render_site
@@ -101,6 +101,15 @@ def test_chaos_cli_gate_requires_zero_data_loss() -> None:
     result["zero_data_loss_verified"] = False
 
     assert chaos_succeeded(result) is False
+
+
+@pytest.mark.parametrize("malformed_order_id", [None, 42, b"chaos-test-123"])
+def test_batch_matching_ignores_non_string_order_ids(malformed_order_id: object) -> None:
+    assert _is_order_from_batch(malformed_order_id, "chaos-test") is False
+
+
+def test_batch_matching_accepts_a_string_order_id_from_the_batch() -> None:
+    assert _is_order_from_batch("chaos-test-123", "chaos-test") is True
 
 
 def test_validator_cli_writes_report_and_returns_failure(tmp_path: Path) -> None:

@@ -29,6 +29,11 @@ if hasattr(sys.stdout, "reconfigure"):
 from src.handlers import order_ingest, order_worker
 
 
+def _is_order_from_batch(order_id: object, batch_run_id: str) -> bool:
+    """Return whether a well-formed string order ID belongs to this batch."""
+    return isinstance(order_id, str) and batch_run_id in order_id
+
+
 def drain_queue(sqs: Any, queue_url: str) -> None:
     """Purges or drains all pending messages from the specified SQS queue."""
     try:
@@ -160,7 +165,9 @@ def run_chaos_simulation(
     # Check DynamoDB valid records
     scan_res = table.scan()
     stored_orders = [
-        it for it in scan_res.get("Items", []) if batch_run_id in it.get("order_id", "")
+        it
+        for it in scan_res.get("Items", [])
+        if _is_order_from_batch(it.get("order_id"), batch_run_id)
     ]
 
     # Check DLQ messages
