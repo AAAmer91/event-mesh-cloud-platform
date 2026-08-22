@@ -1,0 +1,143 @@
+name: Reusable Quality and Build
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Unit Tests / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -r dev-requirements.txt
+      - name: Run unit and CI/CD regression tests
+        run: >-
+          python -m pytest tests/unit -v --cov=src --cov-report=xml
+          --cov-report=term-missing --cov-fail-under=85
+      - name: Upload coverage evidence
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: coverage-evidence
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 14
+
+  static-analysis:
+    name: Ruff, Mypy, and Bandit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -r dev-requirements.txt
+      - run: python -m ruff format --check src tests scripts
+      - run: python -m ruff check src tests scripts
+      - run: python -m mypy src scripts
+      - name: Run blocking SAST scan
+        run: python -m bandit -r src -ll -f json -o bandit-report.json
+      - name: Upload SAST evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: bandit-evidence
+          path: bandit-report.json
+          if-no-files-found: error
+          retention-days: 14
+
+  package:
+    name: Build Immutable Lambda Artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Assemble Linux Lambda package
+        run: |
+          mkdir -p build/lambda dist
+          python -m pip install --disable-pip-version-check \
+            --target build/lambda \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.11 \
+            --only-binary=:all: \
+            -r requirements.lock
+          cp -R src build/lambda/src
+          python scripts/build_lambda.py \
+            --package-dir build/lambda \
+            --output dist/lambda-package.zip
+      - name: Smoke-test packaged imports
+        run: |
+          python -m zipfile -e dist/lambda-package.zip build/smoke
+          PYTHONPATH=build/smoke python -c "from src.handlers import order_ingest, order_worker, s3_processor; assert callable(order_ingest.handler); assert callable(order_worker.handler); assert callable(s3_processor.handler)"
+      - name: Generate CycloneDX SBOM
+        run: |
+          python -m pip install --disable-pip-version-check cyclonedx-bom==7.3.1
+          python -m cyclonedx_py requirements requirements.lock --output-format JSON --output-file dist/sbom.cdx.json
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: lambda-release-assets
+          path: |
+            dist/lambda-package.zip
+            dist/sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  terraform:
+    name: Terraform Format and Validate
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_environment: dev
+      TF_VAR_prefix: event-mesh-ci
+      TF_VAR_lambda_package_path: ${{ github.workspace }}/dist/lambda-package.zip
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: lambda-release-assets
+          path: dist
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: 1.15.9
+      - run: terraform fmt -check -recursive infra/terraform
+      - name: Validate LocalStack configuration
+        run: |
+          terraform -chdir=infra/terraform/environments/local init -backend=false -input=false
+          terraform -chdir=infra/terraform/environments/local validate
+      - name: Validate AWS configuration
+        run: |
+          terraform -chdir=infra/terraform/environments/prod init -backend=false -input=false
+          terraform -chdir=infra/terraform/environments/prod validate
+      - name: Validate OIDC bootstrap configuration
+        run: |
+          terraform -chdir=infra/terraform/bootstrap init -backend=false -input=false
+          terraform -chdir=infra/terraform/bootstrap validate

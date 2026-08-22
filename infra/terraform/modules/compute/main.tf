@@ -102,48 +102,10 @@ resource "aws_iam_role_policy_attachment" "lambda_policy_attach" {
 }
 
 # ==============================================================================
-# Packaged Lambda Source Bundle
+# Immutable Lambda Artifact
 # ==============================================================================
-data "archive_file" "lambda_bundle_zip" {
-  type        = "zip"
-  output_path = "${path.root}/lambda_bundle.zip"
-
-  source {
-    content  = file("${path.root}/../../../../src/handlers/order_ingest.py")
-    filename = "src/handlers/order_ingest.py"
-  }
-  source {
-    content  = file("${path.root}/../../../../src/handlers/order_worker.py")
-    filename = "src/handlers/order_worker.py"
-  }
-  source {
-    content  = file("${path.root}/../../../../src/handlers/s3_processor.py")
-    filename = "src/handlers/s3_processor.py"
-  }
-  source {
-    content  = file("${path.root}/../../../../src/core/logger.py")
-    filename = "src/core/logger.py"
-  }
-  source {
-    content  = file("${path.root}/../../../../src/core/metrics.py")
-    filename = "src/core/metrics.py"
-  }
-  source {
-    content  = file("${path.root}/../../../../src/core/tracing.py")
-    filename = "src/core/tracing.py"
-  }
-  source {
-    content  = ""
-    filename = "src/__init__.py"
-  }
-  source {
-    content  = ""
-    filename = "src/core/__init__.py"
-  }
-  source {
-    content  = ""
-    filename = "src/handlers/__init__.py"
-  }
+locals {
+  lambda_package_hash = filebase64sha256(var.lambda_package_path)
 }
 
 # ==============================================================================
@@ -157,8 +119,8 @@ resource "aws_lambda_function" "order_ingest" {
   timeout       = 15
   memory_size   = 256
 
-  filename         = data.archive_file.lambda_bundle_zip.output_path
-  source_code_hash = data.archive_file.lambda_bundle_zip.output_base64sha256
+  filename         = var.lambda_package_path
+  source_code_hash = local.lambda_package_hash
 
   environment {
     variables = {
@@ -185,8 +147,8 @@ resource "aws_lambda_function" "order_worker" {
   timeout       = 30
   memory_size   = 256
 
-  filename         = data.archive_file.lambda_bundle_zip.output_path
-  source_code_hash = data.archive_file.lambda_bundle_zip.output_base64sha256
+  filename         = var.lambda_package_path
+  source_code_hash = local.lambda_package_hash
 
   environment {
     variables = {
@@ -222,8 +184,8 @@ resource "aws_lambda_function" "s3_processor" {
   timeout       = 60
   memory_size   = 512
 
-  filename         = data.archive_file.lambda_bundle_zip.output_path
-  source_code_hash = data.archive_file.lambda_bundle_zip.output_base64sha256
+  filename         = var.lambda_package_path
+  source_code_hash = local.lambda_package_hash
 
 
   environment {

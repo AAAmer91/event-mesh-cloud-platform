@@ -27,7 +27,9 @@ def generate_dashboard(
     # Extract benchmark telemetry
     total_req = benchmark_data.get("total_requests", 0)
     throughput = benchmark_data.get("throughput_req_per_sec", 0.0)
-    success_rate = benchmark_data.get("success_rate_percent", 100.0)
+    benchmark_available = bool(benchmark_data)
+    chaos_available = bool(chaos_data)
+    success_rate = benchmark_data.get("success_rate_percent", 0.0)
     duration = benchmark_data.get("total_duration_sec", 0.0)
     latencies = benchmark_data.get("latency_ms", {})
     avg_lat = latencies.get("avg", 0.0)
@@ -44,8 +46,8 @@ def generate_dashboard(
     valid_persisted = chaos_data.get("valid_orders_persisted", 0)
     poison_injected = chaos_data.get("poison_orders_injected", 0)
     poison_isolated = chaos_data.get("poison_orders_isolated_dlq", 0)
-    isolation_rate = chaos_data.get("fault_isolation_rate_percent", 100.0)
-    zero_data_loss = chaos_data.get("zero_data_loss_verified", True)
+    isolation_rate = chaos_data.get("fault_isolation_rate_percent", 0.0)
+    zero_data_loss = chaos_data.get("zero_data_loss_verified", False)
 
     md = []
     md.append("# ⚡ Enterprise Cloud Platform Performance & Chaos Dashboard")
@@ -77,18 +79,43 @@ def generate_dashboard(
     md.append("")
 
     # Dynamic status indicators
-    throughput_status = "🟢 **OPTIMAL**" if throughput >= 25.0 else "🟡 **DEGRADED**"
-    success_status = "🟢 **PASS**" if success_rate >= 99.0 else "❌ **FAIL**"
+    no_data = "⚪ **NO DATA**"
+    throughput_status = (
+        ("🟢 **OPTIMAL**" if throughput >= 25.0 else "🟡 **DEGRADED**")
+        if benchmark_available
+        else no_data
+    )
+    success_status = (
+        ("🟢 **PASS**" if success_rate >= 99.0 else "❌ **FAIL**")
+        if benchmark_available
+        else no_data
+    )
     p50_status = (
-        "🟢 **OPTIMAL**" if p50 <= 100.0 else ("🟢 **PASS**" if p50 <= 400.0 else "🟡 **DEGRADED**")
+        no_data
+        if not benchmark_available
+        else (
+            "🟢 **OPTIMAL**"
+            if p50 <= 100.0
+            else ("🟢 **PASS**" if p50 <= 400.0 else "🟡 **DEGRADED**")
+        )
     )
     p99_status = (
-        "🟢 **OPTIMAL**"
-        if p99 <= 1000.0
-        else ("🟢 **PASS**" if p99 <= 3000.0 else "🟡 **DEGRADED**")
+        no_data
+        if not benchmark_available
+        else (
+            "🟢 **OPTIMAL**"
+            if p99 <= 1000.0
+            else ("🟢 **PASS**" if p99 <= 3000.0 else "🟡 **DEGRADED**")
+        )
     )
-    isolation_status = "🛡️ **ISOLATED**" if isolation_rate >= 99.9 else "❌ **BREACHED**"
-    integrity_status = "🔒 **VERIFIED**" if zero_data_loss else "❌ **FAILED**"
+    isolation_status = (
+        ("🛡️ **ISOLATED**" if isolation_rate >= 99.9 else "❌ **BREACHED**")
+        if chaos_available
+        else no_data
+    )
+    integrity_status = (
+        ("🔒 **VERIFIED**" if zero_data_loss else "❌ **FAILED**") if chaos_available else no_data
+    )
 
     # KPI Scorecard Cards
     md.append("### 📊 Executive Telemetry & Key Performance Indicators")
@@ -144,7 +171,7 @@ def generate_dashboard(
         f"- **Poison Payloads Quarantined**: **`{poison_isolated}/{poison_injected}`** corrupted messages safely trapped into `event-mesh-local-order-events-dlq`."
     )
     md.append(
-        f"- **Zero Data Loss Status**: {'✅ **100% VERIFIED - Zero Message Loss or Stalled Processing**' if zero_data_loss else '❌ **FAILED**'}"
+        f"- **Zero Data Loss Status**: {no_data if not chaos_available else ('✅ **100% VERIFIED - Zero Message Loss or Stalled Processing**' if zero_data_loss else '❌ **FAILED**')}"
     )
     md.append("")
     md.append("---")

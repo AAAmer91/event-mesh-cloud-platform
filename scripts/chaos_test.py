@@ -104,8 +104,8 @@ def run_chaos_simulation(
 
     ingested_orders = 0
     for _order_id, payload, _ in orders:
-        event = {"body": json.dumps(payload)}
-        res = order_ingest.handler(event)
+        ingest_event = {"body": json.dumps(payload)}
+        res = order_ingest.handler(ingest_event)
         if res["statusCode"] == 201:
             ingested_orders += 1
 
@@ -137,8 +137,10 @@ def run_chaos_simulation(
             continue
 
         empty_attempts = 0
-        event = {"Records": [{"messageId": m["MessageId"], "body": m["Body"]} for m in msgs]}
-        worker_res = order_worker.handler(event)
+        worker_event: dict[str, Any] = {
+            "Records": [{"messageId": m["MessageId"], "body": m["Body"]} for m in msgs]
+        }
+        worker_res = order_worker.handler(worker_event)
         failed_ids = {f["itemIdentifier"] for f in worker_res.get("batchItemFailures", [])}
 
         for m in msgs:
@@ -204,6 +206,13 @@ def run_chaos_simulation(
     return results
 
 
+def chaos_succeeded(results: dict) -> bool:
+    return (
+        results.get("zero_data_loss_verified") is True
+        and float(results.get("fault_isolation_rate_percent", 0.0)) == 100.0
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Event-Mesh Chaos & Resilience Simulator")
     parser.add_argument("--endpoint", default="http://localhost:4566", help="LocalStack Endpoint")
@@ -223,4 +232,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    run_chaos_simulation(args.endpoint, args.orders, args.poison_ratio, args.output)
+    chaos_results = run_chaos_simulation(args.endpoint, args.orders, args.poison_ratio, args.output)
+    raise SystemExit(0 if chaos_succeeded(chaos_results) else 1)

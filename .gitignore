@@ -37,6 +37,18 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 htmlcov/
+bandit-report.json
+pip-audit.json
+benchmark_results.json
+chaos_results.json
+validation_results.json
+baseline.json
+integration-results.xml
+localstack.log
+smoke-response.json
+site/
+history/
+tfplan
 
 # MyPy & Ruff
 .mypy_cache/

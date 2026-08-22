@@ -1,0 +1,39 @@
+name: Provision LocalStack Event Mesh
+description: Start LocalStack, wait deterministically, and apply the tested Terraform artifact
+
+inputs:
+  terraform_directory:
+    description: Terraform root module to apply
+    required: false
+    default: infra/terraform/environments/local
+
+runs:
+  using: composite
+  steps:
+    - name: Start LocalStack
+      shell: bash
+      run: docker compose up -d
+
+    - name: Wait for healthy services
+      shell: bash
+      run: |
+        set -euo pipefail
+        for attempt in {1..60}; do
+          health="$(curl --fail --silent http://localhost:4566/_localstack/health || true)"
+          if grep -q '"s3": "\(available\|running\)"' <<<"$health" && \
+             grep -q '"sqs": "\(available\|running\)"' <<<"$health"; then
+            echo "LocalStack became healthy after $attempt attempts"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "LocalStack did not become healthy within 120 seconds" >&2
+        docker compose logs localstack
+        exit 1
+
+    - name: Apply infrastructure
+      shell: bash
+      working-directory: ${{ inputs.terraform_directory }}
+      run: |
+        terraform init -input=false
+        terraform apply -input=false -auto-approve

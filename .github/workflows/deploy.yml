@@ -1,0 +1,156 @@
+name: Reusable AWS Deployment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      release_tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Protected deployment environment
+        required: true
+        type: choice
+        options: [dev, production]
+      release_tag:
+        description: Existing GitHub Release tag to deploy or roll back to
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.release_tag }} to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ inputs.environment }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_environment: ${{ inputs.environment }}
+      TF_VAR_prefix: event-mesh-${{ inputs.environment }}
+      TF_VAR_lambda_package_path: ${{ github.workspace }}/dist/lambda-package.zip
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Validate environment configuration
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          test -n "$AWS_ROLE_ARN" || { echo "AWS_ROLE_ARN environment variable is required" >&2; exit 1; }
+          test -n "$TF_STATE_BUCKET" || { echo "TF_STATE_BUCKET environment variable is required" >&2; exit 1; }
+
+      - name: Download same-run release assets
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: lambda-release-assets
+          path: dist
+
+      - name: Download selected release for manual promotion or rollback
+        if: github.event_name == 'workflow_dispatch'
+        run: gh release download "$RELEASE_TAG" --pattern lambda-package.zip --dir dist
+
+      - name: Discover automatic rollback release
+        id: previous
+        run: |
+          previous_tag="$(gh release list --limit 20 --json tagName --jq '.[].tagName' | grep -Fvx "$RELEASE_TAG" | head -n 1 || true)"
+          echo "tag=$previous_tag" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@cabfdba3510de1431bac9dba27511d97497fc100 # v5
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: 1.15.9
+
+      - name: Initialize remote state
+        working-directory: infra/terraform/environments/prod
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=${TF_VAR_environment}/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="use_lockfile=true"
+
+      - name: Create reviewed deployment plan
+        working-directory: infra/terraform/environments/prod
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Publish Terraform plan summary
+        working-directory: infra/terraform/environments/prod
+        run: |
+          {
+            echo "# Terraform Promotion Plan"
+            echo
+            echo "- Environment: **$TF_VAR_environment**"
+            echo "- Release: **$RELEASE_TAG**"
+            echo
+            echo '```text'
+            terraform show -no-color tfplan | tail -n 80
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deployment plan evidence
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: terraform-plan-${{ inputs.environment }}-${{ inputs.release_tag }}
+          path: infra/terraform/environments/prod/tfplan
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Apply reviewed plan
+        working-directory: infra/terraform/environments/prod
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Smoke-test deployed API
+        id: smoke
+        continue-on-error: true
+        working-directory: infra/terraform/environments/prod
+        run: |
+          api_endpoint="$(terraform output -raw api_endpoint)"
+          response_code="$(curl --silent --show-error --output smoke-response.json --write-out '%{http_code}' \
+            --request POST "${api_endpoint}/orders" \
+            --header 'Content-Type: application/json' \
+            --data '{"customer_id":"deployment-smoke","items":[{"item_id":"ci-smoke","name":"CI smoke test","quantity":1,"unit_price":1.0}]}')"
+          cat smoke-response.json
+          test "$response_code" = "201"
+
+      - name: Automatically restore previous release after failed smoke test
+        if: steps.smoke.outcome == 'failure' && steps.previous.outputs.tag != ''
+        working-directory: infra/terraform/environments/prod
+        env:
+          PREVIOUS_TAG: ${{ steps.previous.outputs.tag }}
+          TF_VAR_lambda_package_path: ${{ github.workspace }}/rollback/lambda-package.zip
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/rollback"
+          gh release download "$PREVIOUS_TAG" --pattern lambda-package.zip --dir "$GITHUB_WORKSPACE/rollback"
+          terraform apply -input=false -auto-approve
+          echo "Smoke test failed; restored $PREVIOUS_TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail deployment after rollback
+        if: always() && steps.smoke.outcome == 'failure'
+        run: |
+          echo "Deployment smoke test failed. Automatic rollback was attempted when a previous release was available." >&2
+          exit 1

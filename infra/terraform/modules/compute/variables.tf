@@ -51,6 +51,11 @@ variable "enable_api_gateway" {
   default     = true
 }
 
+variable "lambda_package_path" {
+  description = "Absolute path to the tested Lambda deployment ZIP"
+  type        = string
+}
+
 variable "tags" {
   description = "Resource tags"
   type        = map(string)

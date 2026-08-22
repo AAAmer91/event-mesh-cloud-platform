@@ -1,126 +1,232 @@
-name: Performance Benchmark & Chaos Simulation
+name: Performance Evidence and Chaos
 
 on:
   workflow_dispatch:
     inputs:
       event_count:
-        description: "Number of events to benchmark"
+        description: Events in the load benchmark
         required: true
-        default: "100"
-        type: string
+        default: 100
+        type: number
       batch_size:
-        description: "Concurrent batch size"
+        description: Concurrent benchmark workers
         required: true
-        default: "20"
-        type: string
+        default: 20
+        type: number
       chaos_count:
-        description: "Number of orders to chaos test"
-        required: false
-        default: "50"
-        type: string
+        description: Orders in the resilience simulation
+        required: true
+        default: 50
+        type: number
       chaos_ratio:
-        description: "Poison-pill ratio (e.g. 0.2 for 20%)"
-        required: false
+        description: Poison-pill ratio
+        required: true
         default: "0.2"
         type: string
   schedule:
-    # Run nightly at midnight UTC
     - cron: "0 0 * * *"
 
+permissions:
+  actions: read
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: performance-evidence
   cancel-in-progress: true
 
 jobs:
-  benchmark-and-chaos:
-    name: Load & Chaos Testing
+  quality:
+    name: Reuse Tested Build Pipeline
+    uses: ./.github/workflows/reusable-quality.yml
+
+  benchmark:
+    name: Benchmark, Chaos, and Regression Analysis
+    needs: quality
     runs-on: ubuntu-latest
-
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    outputs:
+      passed: ${{ steps.result.outputs.passed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONPATH: .
+      AWS_ENDPOINT_URL: http://localhost:4566
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:event-mesh-local-order-events-topic
+      DYNAMODB_TABLE_NAME: event-mesh-local-orders-table
+      EVENT_COUNT: ${{ inputs.event_count || 100 }}
+      BATCH_SIZE: ${{ inputs.batch_size || 20 }}
+      CHAOS_COUNT: ${{ inputs.chaos_count || 50 }}
+      CHAOS_RATIO: ${{ inputs.chaos_ratio || '0.2' }}
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: lambda-release-assets
+          path: dist
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
-          cache: "pip"
-
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r dev-requirements.txt
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+          cache: pip
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
         with:
-          terraform_version: 1.8.0
+          terraform_version: 1.15.9
+      - run: python -m pip install --disable-pip-version-check -r dev-requirements.txt
 
-      - name: Start LocalStack via Docker Compose
+      - name: Restore latest successful history and baseline
         run: |
-          docker compose up -d
+          mkdir -p history previous
+          previous_run="$(gh run list --workflow scheduled-benchmark.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          if [[ -n "$previous_run" ]]; then
+            gh run download "$previous_run" --name performance-history --dir previous || true
+          fi
+          previous_history="$(find previous -name history.json -print -quit)"
+          if [[ -n "$previous_history" ]]; then
+            cp "$previous_history" history/history.json
+            jq '.[-1].benchmark // empty' history/history.json > baseline.json
+          else
+            echo '[]' > history/history.json
+          fi
 
-      - name: Wait for LocalStack Readiness
-        run: |
-          echo "Waiting for LocalStack to be fully available..."
-          for i in {1..30}; do
-            if curl -s http://localhost:4566/_localstack/health | grep "\"s3\": \"running\""; then
-              echo "LocalStack is ready!"
-              break
-            fi
-            echo "Waiting for LocalStack ($i/30)..."
-            sleep 2
-          done
+      - uses: ./.github/actions/setup-localstack
 
-      - name: Initialize and Apply Terraform on LocalStack
-        run: |
-          cd infra/terraform/environments/local
-          terraform init
-          terraform apply -auto-approve
+      - name: Run load benchmark
+        id: load
+        continue-on-error: true
+        run: >-
+          python scripts/benchmark_events.py
+          --total "$EVENT_COUNT"
+          --batch "$BATCH_SIZE"
+          --direct --output benchmark_results.json
 
-      - name: Run Load Benchmark Suite
-        env:
-          PYTHONPATH: .
-          AWS_ENDPOINT_URL: http://localhost:4566
-          AWS_DEFAULT_REGION: us-east-1
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
-          SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:event-mesh-local-order-events-topic
-        run: |
-          echo "Executing Event Mesh Load Benchmark..."
-          python scripts/benchmark_events.py --total ${{ github.event.inputs.event_count || '100' }} --batch ${{ github.event.inputs.batch_size || '20' }} --direct --output benchmark_results.json
+      - name: Run poison-pill chaos simulation
+        id: chaos
+        continue-on-error: true
+        run: >-
+          python scripts/chaos_test.py
+          --count "$CHAOS_COUNT"
+          --chaos-ratio "$CHAOS_RATIO"
+          --output chaos_results.json
 
-      - name: Run Chaos Engineering & Poison-Pill Simulation
-        env:
-          PYTHONPATH: .
-          AWS_ENDPOINT_URL: http://localhost:4566
-          AWS_DEFAULT_REGION: us-east-1
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
-          SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:event-mesh-local-order-events-topic
-          DYNAMODB_TABLE_NAME: event-mesh-local-orders-table
-        run: |
-          echo "Executing Chaos & Fault Isolation Verification..."
-          python scripts/chaos_test.py --count ${{ github.event.inputs.chaos_count || '50' }} --chaos-ratio ${{ github.event.inputs.chaos_ratio || '0.2' }} --output chaos_results.json
-
-
-      - name: Generate & Publish Executive Platform Dashboard
+      - name: Evaluate SLAs and historical regression
+        id: validation
         if: always()
+        continue-on-error: true
         run: |
-          python scripts/generate_summary.py benchmark_results.json chaos_results.json
+          baseline_args=()
+          [[ -s baseline.json ]] && baseline_args=(--baseline baseline.json)
+          python scripts/validate_results.py \
+            --benchmark benchmark_results.json \
+            --chaos chaos_results.json \
+            --output validation_results.json \
+            "${baseline_args[@]}"
 
-      - name: Upload Benchmark & Chaos Telemetry Artifacts
+      - name: Publish dynamic run summary
         if: always()
-        uses: actions/upload-artifact@v4
+        run: python scripts/generate_summary.py benchmark_results.json chaos_results.json
+
+      - name: Render persistent GitHub Pages evidence
+        if: always()
+        run: >-
+          python scripts/render_performance_site.py
+          --history history/history.json
+          --benchmark benchmark_results.json
+          --chaos chaos_results.json
+          --validation validation_results.json
+          --output-dir site
+
+      - name: Open, update, or resolve performance incident
+        if: always()
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
-          name: benchmark-and-chaos-telemetry
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('validation_results.json', 'utf8'));
+            const marker = '<!-- event-mesh-performance-incident -->';
+            const title = 'Performance or resilience quality gate regression';
+            for (const [name, color] of [['performance-regression', 'b60205'], ['automated', '1d76db']]) {
+              try {
+                await github.rest.issues.getLabel({ owner: context.repo.owner, repo: context.repo.repo, name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({ owner: context.repo.owner, repo: context.repo.repo, name, color });
+              }
+            }
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'performance-regression'
+            });
+            const existing = issues.find(issue => issue.title === title);
+            if (!report.passed) {
+              const body = `${marker}\n## Automated regression evidence\n\n${report.failures.map(f => `- ❌ ${f}`).join('\n')}\n\n[Workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+              if (existing) {
+                await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, body });
+              } else {
+                await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body, labels: ['performance-regression', 'automated'] });
+              }
+            } else if (existing) {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, body: `✅ Regression recovered in [run ${context.runNumber}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).` });
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, state: 'closed', state_reason: 'completed' });
+            }
+
+      - name: Export gate output
+        id: result
+        if: always()
+        run: echo "passed=$(jq -r '.passed // false' validation_results.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload telemetry and persistent history
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: performance-history
           path: |
             benchmark_results.json
             chaos_results.json
-          retention-days: 14
+            validation_results.json
+            history/history.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload Pages site
+        if: always()
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: site
 
       - name: Teardown LocalStack
         if: always()
-        run: |
-          docker compose down -v
+        run: docker compose down -v
 
+  deploy-pages:
+    name: Publish Performance Dashboard
+    needs: benchmark
+    if: always() && needs.benchmark.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+  performance-gate:
+    name: Enforce Performance Quality Gate
+    if: always()
+    needs: [benchmark, deploy-pages]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          PASSED: ${{ needs.benchmark.outputs.passed }}
+        run: test "$PASSED" = "true"

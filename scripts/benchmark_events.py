@@ -165,6 +165,13 @@ def run_benchmark(
     return results
 
 
+def benchmark_succeeded(results: dict) -> bool:
+    return (
+        int(results.get("failed_requests", 1)) == 0
+        and float(results.get("success_rate_percent", 0.0)) == 100.0
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Event Ingestion Load Benchmarker")
     parser.add_argument(
@@ -195,4 +202,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.environ["AWS_ENDPOINT_URL"] = os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566")
-    run_benchmark(args.endpoint, args.requests, args.concurrency, args.direct, args.output)
+    benchmark_results = run_benchmark(
+        args.endpoint, args.requests, args.concurrency, args.direct, args.output
+    )
+    raise SystemExit(0 if benchmark_succeeded(benchmark_results) else 1)

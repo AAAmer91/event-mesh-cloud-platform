@@ -1,37 +1,77 @@
-name: Release & Tagging
+name: Reusable Release and Provenance
 
 on:
-  push:
-    branches:
-      - main
+  workflow_call:
+    outputs:
+      should_release:
+        description: Whether conventional commits require a release
+        value: ${{ jobs.release.outputs.should_release }}
+      release_tag:
+        description: Created semantic version tag
+        value: ${{ jobs.release.outputs.release_tag }}
 
 permissions:
   contents: write
-  pull-requests: read
+  id-token: write
+  attestations: write
 
 jobs:
   release:
-    name: Create GitHub Release
+    name: Attest and Publish
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, 'skip-ci')"
+    timeout-minutes: 10
+    outputs:
+      should_release: ${{ steps.version.outputs.should_release }}
+      release_tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-
-      - name: Generate Release Tag
-        id: tag_version
-        uses: mathieudutour/github-tag-action@v6.2
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          default_bump: minor
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        if: steps.tag_version.outputs.new_tag != ''
+          name: lambda-release-assets
+          path: dist
+      - name: Calculate conventional semantic version
+        id: version
+        run: python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
+      - name: Generate release notes
+        if: steps.version.outputs.should_release == 'true'
+        run: |
+          previous_tag="$(git describe --tags --abbrev=0)"
+          {
+            echo "## Changes"
+            echo
+            git log "${previous_tag}..HEAD" --pretty='format:- %s (%h)'
+            echo
+            echo "## Verification"
+            echo
+            echo "This exact Lambda ZIP passed unit, static-analysis, Terraform, LocalStack integration, and supply-chain gates before publication."
+          } > dist/release-notes.md
+      - name: Attest build provenance
+        if: steps.version.outputs.should_release == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          tag_name: ${{ steps.tag_version.outputs.new_tag }}
-          name: Release ${{ steps.tag_version.outputs.new_tag }}
-          body: ${{ steps.tag_version.outputs.changelog }}
-          draft: false
-          prerelease: false
+          subject-path: dist/lambda-package.zip
+      - name: Attest SBOM
+        if: steps.version.outputs.should_release == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: dist/lambda-package.zip
+          sbom-path: dist/sbom.cdx.json
+      - name: Publish GitHub Release
+        if: steps.version.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            dist/lambda-package.zip \
+            dist/sbom.cdx.json \
+            --target "$GITHUB_SHA" \
+            --title "Event Mesh $RELEASE_TAG" \
+            --notes-file dist/release-notes.md \
+            --fail-on-no-commits
+      - name: Explain skipped release
+        if: steps.version.outputs.should_release != 'true'
+        run: echo "No releasable conventional commits were found; artifact publication was intentionally skipped." >> "$GITHUB_STEP_SUMMARY"

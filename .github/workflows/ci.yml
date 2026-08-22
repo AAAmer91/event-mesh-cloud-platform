@@ -1,151 +1,141 @@
-name: CI & LocalStack Cloud Integration
+name: CI/CD Pipeline
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  unit-tests:
-    name: Unit Tests (Python ${{ matrix.python-version }})
+  quality:
+    name: Quality and Immutable Build
+    uses: ./.github/workflows/reusable-quality.yml
+
+  security:
+    name: Security and Supply Chain
+    uses: ./.github/workflows/lint-and-security.yml
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
+
+  integration:
+    name: Cloud Integration
+    needs: quality
+    uses: ./.github/workflows/reusable-integration.yml
+
+  quality-gate:
+    name: Required Quality Gate
+    if: always()
+    needs: [quality, security, integration]
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-
+    timeout-minutes: 5
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
-
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r dev-requirements.txt
-
-      - name: Run Unit Tests with Coverage
-        run: |
-          python -m pytest tests/unit -v --cov=src --cov-report=xml --cov-report=html:htmlcov --cov-report=term-missing
-
-      - name: Upload Code Coverage Report
-        if: matrix.python-version == '3.11'
-        uses: actions/upload-artifact@v4
-        with:
-          name: code-coverage-report-py311
-          path: |
-            coverage.xml
-            htmlcov/
-          retention-days: 14
-
-  integration-tests:
-    name: LocalStack Cloud Infrastructure Tests
-    runs-on: ubuntu-latest
-    needs: unit-tests
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r dev-requirements.txt
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.8.0
-
-      - name: Start LocalStack via Docker Compose
-        run: |
-          docker compose up -d
-
-      - name: Wait for LocalStack Readiness
-        run: |
-          echo "Waiting for LocalStack to be fully available..."
-          for i in {1..30}; do
-            if curl -s http://localhost:4566/_localstack/health | grep "\"s3\": \"running\""; then
-              echo "LocalStack is ready!"
-              break
-            fi
-            echo "Waiting for LocalStack ($i/30)..."
-            sleep 2
-          done
-
-      - name: Initialize and Apply Terraform on LocalStack
-        run: |
-          cd infra/terraform/environments/local
-          terraform init
-          terraform apply -auto-approve
-
-      - name: Run End-to-End LocalStack Integration Tests
+      - name: Evaluate required evidence
         env:
-          AWS_ENDPOINT_URL: http://localhost:4566
-          AWS_DEFAULT_REGION: us-east-1
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
         run: |
-          python -m pytest tests/integration -v --tb=short -s
+          {
+            echo "# CI/CD Quality Gate"
+            echo
+            echo "| Gate | Result |"
+            echo "| --- | --- |"
+            echo "| Quality and artifact build | $QUALITY_RESULT |"
+            echo "| Security and supply chain | $SECURITY_RESULT |"
+            echo "| LocalStack integration | $INTEGRATION_RESULT |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$QUALITY_RESULT" == "success" ]]
+          [[ "$SECURITY_RESULT" == "success" ]]
+          [[ "$INTEGRATION_RESULT" == "success" ]]
 
-      - name: Generate GitHub Actions Step Summary
-        if: always()
-        run: |
-          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
-          # 🚀 LocalStack Cloud Integration & E2E Test Report
+  pr-report:
+    name: Publish Evidence-based PR Report
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: quality-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              filter: 'latest',
+            });
+            const rows = jobs
+              .filter(job => job.name !== 'Publish Evidence-based PR Report')
+              .map(job => `| ${job.name} | ${job.conclusion === 'success' ? '✅' : job.conclusion === 'skipped' ? '⏭️' : '❌'} ${job.conclusion ?? 'unknown'} |`)
+              .join('\n');
+            const marker = '<!-- event-mesh-ci-evidence -->';
+            const body = `${marker}
+            ### CI/CD evidence for \`${context.sha.substring(0, 7)}\`
 
-          > **Zero-Cost Enterprise Serverless Event Mesh Verification**
+            | Executed gate | Actual conclusion |
+            | --- | --- |
+            ${rows}
 
-          ### 📐 Cloud Infrastructure & Event Routing Flow
-          ```mermaid
-          flowchart TD
-              subgraph ClientEvents [Ingress]
-                  API[Order Client] -->|Publish| SNS[SNS: order-events-topic]
-                  S3B[S3 Bucket: event-ingestion-payloads] -->|s3:ObjectCreated| S3L[Lambda: s3-processor]
-              end
-              subgraph Messaging [Asynchronous Buffering]
-                  SNS -->|Subscription| SQS1[SQS: order-events-queue]
-                  SNS -->|Subscription| SQS2[SQS: notification-events-queue]
-              end
-              subgraph Compute [Serverless Execution]
-                  SQS1 -->|Event Source Mapping| L1[Lambda: order-worker]
-                  L1 -->|Valid| DB[(DynamoDB: orders-table)]
-                  L1 -->|Poison Pill| DLQ[(SQS DLQ: order-events-dlq)]
-                  S3L -->|Batch Insert| DB
-              end
-          ```
+            **Pipeline:** [run #${context.runNumber}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
 
-          ### 📊 E2E Test Suite & Infrastructure Verification Scorecard
+            _Generated from completed jobs; no predicted or hard-coded pass states._`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const previous = comments.find(comment => comment.user?.type === 'Bot' && comment.body?.includes(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            }
 
-          | Test Domain | Verified AWS Components | Verification Criteria | Status |
-          | :--- | :--- | :--- | :---: |
-          | **Unit Test Matrix** | Python 3.11 & 3.12 | Pydantic validation, idempotent worker logic | 🟢 **PASSED** |
-          | **Terraform IaC** | 25 AWS Resources | Modular deployment across Compute, Storage, Messaging, Observability | 🟢 **PASSED** |
-          | **Order Fanout Flow** | SNS $\to$ SQS $\to$ DynamoDB | Asynchronous ingestion with correlation ID tracing | 🟢 **PASSED** |
-          | **DLQ Fault Isolation** | SQS $\to$ Lambda $\to$ DLQ | Poison payloads isolated without blocking consumer queue | 🟢 **PASSED** |
-          | **S3 Batch Processing** | S3 $\to$ Lambda $\to$ DynamoDB | Bulk JSON payload parsing and batch write idempotency | 🟢 **PASSED** |
-          | **Observability & Alarms** | CloudWatch Logs & Alarms | Retention policies & ApproximateNumberOfMessagesVisible metric alarm | 🟢 **PASSED** |
+  release:
+    name: Release Tested Artifact
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: quality-gate
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
-          EOF
+  deploy-dev:
+    name: Promote to Development
+    if: needs.release.outputs.should_release == 'true' && vars.AWS_ROLE_ARN != '' && vars.TF_STATE_BUCKET != ''
+    needs: release
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: dev
+      release_tag: ${{ needs.release.outputs.release_tag }}
+    permissions:
+      contents: read
+      id-token: write
 
-      - name: Teardown LocalStack
-        if: always()
-        run: |
-          docker compose down -v
-
+  deploy-production:
+    name: Promote to Production
+    if: needs.release.outputs.should_release == 'true' && vars.AWS_ROLE_ARN != '' && vars.TF_STATE_BUCKET != ''
+    needs: [release, deploy-dev]
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: production
+      release_tag: ${{ needs.release.outputs.release_tag }}
+    permissions:
+      contents: read
+      id-token: write

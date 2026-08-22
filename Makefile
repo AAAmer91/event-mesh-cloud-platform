@@ -1,7 +1,8 @@
-.PHONY: help up down logs tf-init tf-apply tf-destroy test-unit test-integration test lint format clean chaos bench
+.PHONY: help package up down logs tf-init tf-apply tf-destroy test-unit test-integration test lint format clean chaos bench
 
 help:
 	@echo "Event-Mesh Cloud Platform Commands:"
+	@echo "  make package          - Build the deployable, reproducible Lambda ZIP"
 	@echo "  make up               - Start LocalStack in background"
 	@echo "  make down             - Stop LocalStack"
 	@echo "  make logs             - View LocalStack container logs"
@@ -17,6 +18,13 @@ help:
 	@echo "  make format           - Auto-format code with Ruff"
 	@echo "  make clean            - Remove cache and temporary files"
 
+package:
+	rm -rf build/lambda dist/lambda-package.zip
+	mkdir -p build/lambda dist
+	python -m pip install --disable-pip-version-check --target build/lambda --platform manylinux2014_x86_64 --implementation cp --python-version 3.11 --only-binary=:all: -r requirements.lock
+	cp -R src build/lambda/src
+	python scripts/build_lambda.py --package-dir build/lambda --output dist/lambda-package.zip
+
 up:
 	docker compose up -d
 	@echo "Waiting for LocalStack to be ready..."
@@ -31,10 +39,10 @@ logs:
 tf-init:
 	cd infra/terraform/environments/local && terraform init
 
-tf-apply:
+tf-apply: package
 	cd infra/terraform/environments/local && terraform apply -auto-approve
 
-tf-destroy:
+tf-destroy: package
 	cd infra/terraform/environments/local && terraform destroy -auto-approve
 
 test-unit:
@@ -65,3 +73,4 @@ clean:
 	find . -type d -name ".pytest_cache" -exec rm -rf {} +
 	find . -type d -name ".ruff_cache" -exec rm -rf {} +
 	rm -rf .coverage htmlcov/
+	rm -rf build/ dist/

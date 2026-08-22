@@ -6,10 +6,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    archive = {
-      source  = "hashicorp/archive"
-      version = "~> 2.4"
-    }
   }
 }
 
@@ -77,6 +73,7 @@ module "compute" {
   dynamodb_table_arn  = module.storage.dynamodb_table_arn
   s3_bucket_name      = module.storage.s3_bucket_name
   s3_bucket_arn       = module.storage.s3_bucket_arn
+  lambda_package_path = abspath("${path.root}/../../../../dist/lambda-package.zip")
 }
 
 module "observability" {

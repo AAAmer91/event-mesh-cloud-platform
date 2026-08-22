@@ -20,9 +20,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "boto3>=1.34.0",
-    "pydantic>=2.6.0",
-    "aws-lambda-powertools>=2.30.0",
+    "boto3==1.43.10",
+    "pydantic==2.13.4",
 ]
 
 [project.optional-dependencies]
@@ -82,5 +81,4 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["boto3.*", "botocore.*"]
 ignore_missing_imports = true
-
 

@@ -3,7 +3,6 @@
 [![CI & LocalStack Integration](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/ci.yml)
 [![Lint & Security](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/lint-and-security.yml/badge.svg)](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/lint-and-security.yml)
 [![Performance & Chaos](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/scheduled-benchmark.yml/badge.svg)](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/scheduled-benchmark.yml)
-[![Release & Tagging](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/release.yml/badge.svg)](https://github.com/AAAmer91/event-mesh-cloud-platform/actions/workflows/release.yml)
 [![Terraform](https://img.shields.io/badge/Terraform-1.8+-7B42BC?style=flat-square&logo=terraform&logoColor=white)](https://www.terraform.io/)
 [![AWS Serverless](https://img.shields.io/badge/AWS-Serverless-232F3E?style=flat-square&logo=amazonwebservices&logoColor=FF9900)](https://aws.amazon.com/)
 [![LocalStack](https://img.shields.io/badge/LocalStack-v3.2-0055FF?style=flat-square&logo=docker&logoColor=white)](https://www.localstack.cloud/)
@@ -11,7 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
 
 
-> A production-ready, event-driven AWS platform reference architecture built with **Terraform**, **Python/FastAPI serverless handlers**, **SNS/SQS event fanout**, **DynamoDB idempotency**, and **LocalStack testcontainers** running in automated GitHub Actions CI pipelines.
+> A production-ready, event-driven AWS platform reference architecture built with **Terraform**, **Python Lambda handlers**, **SNS/SQS event fanout**, **DynamoDB idempotency**, and **LocalStack** running through a secure GitHub Actions CI/CD supply chain.
 
 ---
 
@@ -58,7 +57,30 @@ flowchart LR
 * **🔬 Distributed Trace Correlation:** End-to-end trace context propagation across HTTP headers, SNS MessageAttributes, and CloudWatch structured JSON logs.
 * **🔒 DevSecOps Quality Gate:** AST static security vulnerability scanning (Bandit), strict PEP 484 static typing (Mypy), and Ruff linting.
 * **🧪 100% Local Cloud Simulation:** Fully provisioned and tested locally against **LocalStack v3** via Docker Compose—zero cloud bills.
-* **🚀 Production-Grade CI/CD & Dashboards:** 5 automated GitHub Actions workflows with rich native Mermaid Step Summaries, artifact uploads, and PR architecture review bots.
+* **🚀 Evidence-Driven CI/CD:** Reusable workflows, required aggregate gates, immutable artifacts, OIDC deployment, protected environment promotion, rollback, SBOM/provenance attestations, and evidence-based PR reports.
+* **📈 Persistent Delivery Telemetry:** Scheduled benchmarks compare historical baselines, publish a GitHub Pages dashboard, and automatically open or resolve regression incidents.
+
+---
+
+## 🔁 CI/CD Delivery Path
+
+```mermaid
+flowchart LR
+    PR[Pull Request / Merge Queue] --> Q[Reusable quality matrix]
+    PR --> S[CodeQL + dependencies + Scorecard]
+    Q --> I[Terraform + LocalStack E2E]
+    S --> G{Required quality gate}
+    I --> G
+    G -->|main| B[Immutable Lambda ZIP]
+    B --> A[SBOM + signed provenance]
+    A --> R[Semantic GitHub Release]
+    R --> D[OIDC deploy: dev]
+    D --> P{Production approval}
+    P --> PROD[Promote exact artifact]
+    PROD --> SMOKE[Smoke test / automatic rollback]
+```
+
+The pipeline builds the deployment artifact once and promotes the exact same digest. AWS access uses short-lived GitHub OIDC tokens; no long-lived AWS keys are stored. See [CI/CD and deployment operations](docs/CICD.md) for the security model, repository settings, environment setup, rollback procedure, and evidence catalog.
 
 ---
 
@@ -68,11 +90,16 @@ flowchart LR
 event-mesh-cloud-platform/
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                 # LocalStack container + Terraform apply + Coverage Artifacts
-│   │   ├── lint-and-security.yml  # Bandit SAST, Mypy type-checking, Ruff, Terraform fmt
-│   │   ├── scheduled-benchmark.yml# Nightly load benchmark & chaos resilience dashboard
-│   │   ├── pr-automation.yml      # PR Architecture gatekeeper & automated review bot
-│   │   └── release.yml            # Semantic release and GitHub release tagging
+│   │   ├── ci.yml                  # Orchestrated CI/CD and protected promotion graph
+│   │   ├── reusable-quality.yml    # Test matrix, quality, artifact, SBOM, Terraform validation
+│   │   ├── reusable-integration.yml# Reusable LocalStack E2E verification
+│   │   ├── lint-and-security.yml   # CodeQL, dependency audit/review, OpenSSF Scorecard
+│   │   ├── scheduled-benchmark.yml # Regression incidents and GitHub Pages evidence
+│   │   ├── release.yml             # Semantic release and artifact attestations
+│   │   └── deploy.yml              # OIDC environments, plans, smoke tests, rollback
+│   ├── actions/setup-localstack/   # Repository-local composite action
+│   ├── dependabot.yml              # Python, Actions, Terraform, and Docker updates
+│   ├── CODEOWNERS
 │   ├── ISSUE_TEMPLATE/            # Enterprise GitHub Bug & Feature form templates
 │   └── pull_request_template.md
 ├── infra/
@@ -82,7 +109,8 @@ event-mesh-cloud-platform/
 │       │   │   ├── main.tf
 │       │   │   ├── outputs.tf
 │       │   │   └── variables.tf
-│       │   └── prod/              # Production AWS provider
+│       │   └── prod/               # Remote-state AWS dev/production environment
+│       ├── bootstrap/              # OIDC provider, deploy role, protected state bucket
 │       └── modules/
 │           ├── compute/           # Lambda functions & API Gateway v2 [README.md]
 │           ├── messaging/         # SNS topics, SQS queues, DLQ & redrive policies [README.md]
@@ -91,7 +119,11 @@ event-mesh-cloud-platform/
 ├── scripts/
 │   ├── benchmark_events.py        # High-throughput load benchmarking & latency percentiles
 │   ├── chaos_test.py              # Chaos & poison-pill resilience simulation tool
-│   └── generate_summary.py        # Executive GitHub Actions Step Summary & Mermaid renderer
+│   ├── generate_summary.py         # Fail-closed GitHub Actions summary
+│   ├── validate_results.py         # SLA and historical regression quality gate
+│   ├── render_performance_site.py  # Persistent GitHub Pages evidence dashboard
+│   ├── release_version.py          # Conventional semantic release calculation
+│   └── build_lambda.py             # Deterministic dependency-complete Lambda ZIP
 ├── src/
 │   ├── core/
 │   │   ├── logger.py              # Structured JSON logging
@@ -112,7 +144,7 @@ event-mesh-cloud-platform/
 ├── docker-compose.yml             # LocalStack v3 with auto-provisioning
 ├── Makefile                       # Single-command dev workflow (`make up`, `make chaos`, `make bench`)
 ├── pyproject.toml                 # Ruff, Pytest, MyPy configurations
-├── requirements.txt / dev-requirements.txt
+├── requirements.txt / requirements.lock / dev-requirements.txt
 ├── ARCHITECTURE.md                # Deep-dive architecture and design decisions
 ├── CONTRIBUTING.md                # Open-source contribution guide
 ├── SECURITY.md                    # Vulnerability reporting protocols
@@ -132,6 +164,7 @@ event-mesh-cloud-platform/
 ```bash
 # Spin up LocalStack v3 in background and apply Terraform
 make up
+make package
 make tf-init
 make tf-apply
 ```
@@ -158,7 +191,9 @@ make bench            # Runs concurrent ingestion load benchmark
 | **Unit Tests** | `pytest`, `moto` | Fast in-memory tests validating Pydantic schemas, payload error responses, and idempotency logic. |
 | **Integration Tests** | `pytest`, `LocalStack` | Tests real asynchronous SNS fanout, SQS queue consumption, DLQ redrive, S3 bucket notifications, and DynamoDB storage. |
 | **Chaos Simulation** | `python`, `boto3` | Injects 100 concurrent orders with 10% deliberate failure payloads to verify zero data loss and automated DLQ quarantine. |
-| **Lint & Security** | `ruff`, `terraform fmt` | Strict code quality, formatting, and infrastructure syntax validation. |
+| **Lint & Types** | `ruff`, `mypy`, `terraform` | Formatting, lint, typing, coverage threshold, IaC format and validation. |
+| **Supply Chain** | CodeQL, dependency review, pip-audit, OpenSSF Scorecard | SAST, vulnerable dependency blocking, workflow hardening, SBOM and signed provenance. |
+| **Delivery** | GitHub Environments, AWS OIDC | Reviewed plans, immutable promotion, post-deployment smoke test, automatic rollback. |
 
 ---
 

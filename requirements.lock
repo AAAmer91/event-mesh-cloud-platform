@@ -1,0 +1,14 @@
+# Fully resolved Linux/Python 3.11 Lambda runtime dependencies.
+# Dependabot maintains the direct requirements; regenerate this file when they change.
+annotated-types==0.8.0
+boto3==1.43.10
+botocore==1.43.78
+jmespath==1.1.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+python-dateutil==2.9.0.post0
+s3transfer==0.17.1
+six==1.17.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+urllib3==2.7.0

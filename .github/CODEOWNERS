@@ -1,0 +1,4 @@
+/.github/ @AAAmer91
+/infra/ @AAAmer91
+/scripts/build_lambda.py @AAAmer91
+/scripts/release_version.py @AAAmer91
