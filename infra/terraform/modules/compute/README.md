@@ -1,34 +1,42 @@
-# ⚡ Compute Terraform Module
+# Compute Module
 
-Provisions serverless compute components: **AWS Lambda functions**, **Amazon API Gateway v2 (HTTP API)**, SQS Event Source Mappings with partial batch failure reporting, and S3 event triggers.
+This module connects the tested Lambda package to the event-processing resources. It creates three Python 3.11 functions, their execution role and policy, an SQS event source mapping, an S3 notification, and an optional API Gateway HTTP API.
 
----
+## Responsibilities
 
-## 🏗️ Lambda Functions
-1. **`order-ingest`**: Python 3.11 handler attached to API Gateway route `POST /orders`.
-2. **`order-worker`**: SQS consumer attached to `order-events-queue` with `batch_size = 10` and `function_response_types = ["ReportBatchItemFailures"]`.
-3. **`s3-processor`**: Batch worker triggered by S3 `ObjectCreated` events.
+- `order-ingest` handles `POST /orders` and publishes to the supplied SNS topic.
+- `order-worker` consumes the order queue in batches of up to 10 and reports individual batch failures.
+- `s3-processor` handles JSON object-created events from the supplied S3 bucket.
+- The IAM policy permits only the SNS, SQS, DynamoDB, S3, logging, and metric actions used by these handlers.
 
----
+All functions use the same immutable ZIP path and its content hash. Packaging is intentionally outside this module so the same tested artifact can be promoted between environments.
 
-## 📥 Inputs
+## Inputs
 
 | Name | Type | Required | Description |
-| :--- | :--- | :---: | :--- |
-| `prefix` | `string` | No | Resource name prefix (`default: "event-mesh"`). |
-| `environment` | `string` | No | Target environment (`local`, `dev`, `prod`). |
-| `sns_topic_arn` | `string` | Yes | Target SNS Topic ARN for publishing. |
-| `order_queue_arn` | `string` | Yes | SQS Queue ARN to bind worker trigger. |
-| `dynamodb_table_name` | `string` | Yes | DynamoDB Table name for persistence. |
-| `s3_bucket_name` | `string` | Yes | S3 bucket name for event triggers. |
+| --- | --- | :---: | --- |
+| `prefix` | `string` | No | Resource-name prefix; default is `event-mesh` |
+| `environment` | `string` | No | Runtime environment label; default is `local` |
+| `sns_topic_arn` | `string` | Yes | Topic used by the ingestion handler |
+| `order_queue_arn` | `string` | Yes | Queue attached to the order worker |
+| `dlq_arn` | `string` | Yes | DLQ included in the worker IAM policy |
+| `dynamodb_table_name` | `string` | Yes | Table name passed to consumers |
+| `dynamodb_table_arn` | `string` | Yes | Table and index IAM scope |
+| `s3_bucket_name` | `string` | Yes | Bucket receiving the Lambda notification |
+| `s3_bucket_arn` | `string` | Yes | Bucket IAM and invocation scope |
+| `enable_api_gateway` | `bool` | No | Creates the HTTP API when true; default is `true` |
+| `lambda_package_path` | `string` | Yes | Absolute path to the tested deployment ZIP |
+| `tags` | `map(string)` | No | Tags merged into supported resources |
 
----
-
-## 📤 Outputs
+## Outputs
 
 | Name | Description |
-| :--- | :--- |
-| `api_endpoint` | Base URL of the API Gateway HTTP API. |
-| `order_ingest_lambda_arn` | ARN of the ingestion Lambda. |
-| `order_worker_lambda_arn` | ARN of the worker Lambda. |
-| `s3_processor_lambda_arn` | ARN of the S3 processor Lambda. |
+| --- | --- |
+| `api_endpoint` | API Gateway invoke URL, or the direct-invocation marker when disabled |
+| `order_ingest_lambda_arn` / `order_ingest_lambda_name` | Ingestion function identifiers |
+| `order_worker_lambda_arn` / `order_worker_lambda_name` | Worker function identifiers |
+| `s3_processor_lambda_arn` / `s3_processor_lambda_name` | S3 processor identifiers |
+
+## Operating notes
+
+The API's permissive CORS configuration and the shared execution role are suitable for the current proof of concept. A production implementation should define allowed origins from the client contract and consider separate roles per function to reduce permission overlap.

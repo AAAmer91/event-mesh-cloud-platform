@@ -1,80 +1,84 @@
-# Architecture Deep Dive: Event-Mesh Cloud Platform
+# Architecture
 
-This document provides a comprehensive technical overview of the design patterns, failure modes, idempotency mechanisms, and local cloud simulation strategies used in the **Event-Mesh Cloud Platform**.
+This document describes the event-processing reference implemented by the repository, including its delivery semantics, failure paths, and current boundaries.
 
----
-
-## 🏛️ Architectural Topology
+## System topology
 
 ```mermaid
 flowchart TD
-    subgraph ClientLayer ["1. Ingestion Interface"]
-        HTTPProducer[Client HTTP Request] -->|POST /orders| APIGateway[API Gateway HTTP v2]
-        APIGateway --> IngestLambda[Order Ingest Lambda]
-    end
+    Client[HTTP client] -->|POST /orders| Gateway[API Gateway HTTP API]
+    Gateway --> Ingest[Order ingest Lambda]
+    Ingest -->|publish| Topic[SNS order topic]
+    Topic -->|fanout| OrderQueue[SQS order queue]
+    Topic -->|fanout| NotificationQueue[SQS notification queue]
+    OrderQueue -->|batch up to 10| Worker[Order worker Lambda]
+    Worker -->|conditional write| Orders[(DynamoDB orders table)]
+    OrderQueue -->|after retry limit| DLQ[SQS dead-letter queue]
 
-    subgraph MessagingLayer ["2. Fanout Event Mesh"]
-        IngestLambda -->|Publish Event| SNSTopic[SNS: OrderEvents Topic]
-        SNSTopic -->|Fanout Subscription| OrderSQS[SQS: OrderProcessingQueue]
-        SNSTopic -->|Fanout Subscription| NotifySQS[SQS: NotificationQueue]
-    end
+    Upload[JSON object upload] --> Bucket[(S3 payload bucket)]
+    Bucket --> Processor[S3 processor Lambda]
+    Processor --> Orders
 
-    subgraph WorkerLayer ["3. Asynchronous Worker & Storage"]
-        OrderSQS -->|Batch Size: 10| OrderWorkerLambda[Order Worker Lambda]
-        OrderWorkerLambda -->|Idempotent Write| DynamoDB[(DynamoDB: OrdersTable)]
-        OrderWorkerLambda -.->|After 3 Failed Deliveries| OrderDLQ[SQS: DeadLetterQueue]
-    end
-
-    subgraph StoragePipeline ["4. S3 Batch Pipeline"]
-        BulkUpload[Bulk JSON File Upload] -->|PutObject| S3Bucket[(S3: EventPayloads)]
-        S3Bucket -->|s3:ObjectCreated:*| S3WorkerLambda[S3 Processor Lambda]
-        S3WorkerLambda -->|Batch Write| DynamoDB
-    end
-
-    subgraph ObservabilityLayer ["5. Monitoring & Alarms"]
-        IngestLambda -.-> CloudWatchLogs[(CloudWatch Logs)]
-        OrderWorkerLambda -.-> CloudWatchLogs
-        OrderDLQ -.-> DLQAlarm[CloudWatch Metric Alarm: DLQ Messages >= 1]
-    end
+    Ingest -. logs and metrics .-> CloudWatch[CloudWatch]
+    Worker -. logs and metrics .-> CloudWatch
+    DLQ -. depth metric .-> Alarm[CloudWatch alarm]
 ```
 
----
+## HTTP ingestion and fanout
 
-## 🔑 Core Design Principles
+API Gateway invokes `order_ingest` for `POST /orders`. The handler validates the payload with Pydantic, assigns an `order_id` and `trace_id`, and publishes an event to SNS. It returns after SNS accepts the publish request rather than waiting for downstream processing.
 
-### 1. Decoupled Ingestion & Fanout Pattern
-- HTTP clients ingest orders via **Amazon API Gateway v2 (HTTP API)**.
-- The `order_ingest` Lambda validates payload integrity with **Pydantic** models, assigns a unique `order_id` and `trace_id`, and immediately publishes the event to an **Amazon SNS** topic.
-- SNS fans out the message to multiple downstream **Amazon SQS** queues without tight coupling between producers and consumers.
+SNS subscriptions deliver independent copies to the order-processing and notification queues. This avoids a direct dependency between the producer and each consumer, and it allows consumers to progress at different rates. It also makes propagation asynchronous: an accepted HTTP response means the event was published, not that every downstream action is complete.
 
-### 2. Idempotency & Duplicate Protection
-In distributed cloud architectures, messaging systems provide *at-least-once* delivery. To prevent duplicate billing or multiple order executions:
-- `order_worker` uses DynamoDB conditional writes:
-  ```python
-  table.put_item(
-      Item=item,
-      ConditionExpression="attribute_not_exists(order_id)",
-  )
-  ```
-- If a duplicate message arrives, the `ConditionalCheckFailedException` is caught gracefully, logged with the `trace_id`, and acknowledged to prevent infinite re-deliveries.
+The notification queue currently has no consumer. It represents an extension point rather than a finished notification capability.
 
-### 3. Partial Batch Failure Handling (`ReportBatchItemFailures`)
-Rather than failing an entire batch of 10 SQS records when a single record encounters an unhandled error:
-- The Lambda event source mapping uses `function_response_types = ["ReportBatchItemFailures"]`.
-- The handler returns:
-  ```json
-  {
-    "batchItemFailures": [
-      {"itemIdentifier": "failed-message-id"}
-    ]
-  }
-  ```
-- SQS only retries the specific failed message while acknowledging the 9 successful ones.
+## Delivery semantics and idempotency
 
-### 4. Dead-Letter Queue (DLQ) & Redrive Strategy
-- If a poisoned message fails processing across **3 delivery attempts**, SQS automatically redirects it to the **Dead-Letter Queue (`event-mesh-order-events-dlq`)**.
-- A **CloudWatch Metric Alarm** monitors `ApproximateNumberOfMessagesVisible >= 1` on the DLQ and alerts on operational drift.
+SQS uses at-least-once delivery, so duplicate messages are part of normal operation. `order_worker` protects the DynamoDB insert with:
 
-### 5. Zero-Cost Local Cloud Simulation (LocalStack)
-- All Terraform modules, SNS-to-SQS fanout subscriptions, S3 event notifications, and Lambda triggers run locally against **LocalStack v3** without needing AWS cloud accounts or incurring cloud spend.
-- Automated GitHub Actions spin up ephemeral LocalStack service containers, apply Terraform, and execute end-to-end integration tests on every pull request.
+```python
+table.put_item(
+    Item=item,
+    ConditionExpression="attribute_not_exists(order_id)",
+)
+```
+
+A duplicate `order_id` raises `ConditionalCheckFailedException`; the handler records the duplicate and acknowledges it. This prevents duplicate rows for that key. Other side effects would require their own idempotency keys or transaction boundaries.
+
+## Partial batch failures
+
+The SQS event source mapping enables `ReportBatchItemFailures`. When one record fails, the handler returns only that message identifier:
+
+```json
+{
+  "batchItemFailures": [
+    {"itemIdentifier": "failed-message-id"}
+  ]
+}
+```
+
+Successful records in the same invocation are acknowledged. Failed records are retried after the visibility timeout. A message that reaches the configured maximum receive count is moved to the DLQ.
+
+The DLQ prevents a persistent poison message from blocking unrelated records, but it does not resolve the underlying data problem. Production operation needs ownership, alert routing, retention, and a reviewed replay or disposal procedure.
+
+## S3 batch path
+
+The versioned, encrypted S3 bucket accepts JSON payload files and invokes `s3_processor` on object creation. The processor writes parsed orders into the same DynamoDB table. This path models bulk or partner ingestion separately from the HTTP path.
+
+S3 events can also be duplicated or arrive out of order. Batch input therefore follows the same idempotency requirement as queued events.
+
+## Traceability and monitoring
+
+The ingestion path propagates a trace identifier through HTTP headers, SNS message attributes, and structured logs. This supports correlation across asynchronous boundaries without implying full distributed tracing. CloudWatch log groups retain service output, and a queue-depth alarm detects visible DLQ messages.
+
+An operational deployment would normally add service-level objectives, dashboards, paging routes, log retention policy, and tracing infrastructure appropriate to its support model.
+
+## Local and AWS environments
+
+The local Terraform composition points supported AWS APIs to LocalStack and is used by integration, failure-injection, and benchmark tests. The AWS composition uses remote state and a GitHub OIDC role for deployments.
+
+Local integration verifies resource wiring and application behavior, but it cannot validate all IAM interactions, quotas, latency, concurrency scaling, or regional service behavior. Changes intended for AWS should be reviewed through a saved Terraform plan and verified in a controlled AWS environment.
+
+## Design boundaries
+
+This proof of concept concentrates on the order event path. It does not include client authentication and authorization, payment or inventory transactions, a notification implementation, schema registry and compatibility enforcement, multi-region recovery, or an automated DLQ replay service. Those concerns should be added only with explicit ownership and failure semantics.

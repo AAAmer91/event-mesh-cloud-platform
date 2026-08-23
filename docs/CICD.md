@@ -1,26 +1,28 @@
 # CI/CD and Deployment Operations
 
-This repository treats workflow output as release evidence. Missing telemetry, skipped mandatory jobs, failed package imports, security findings, and SLA regressions fail closed.
+The workflows implement a build-once promotion model for the proof of concept. Pull requests verify application and infrastructure changes; main-branch releases package an immutable Lambda artifact; protected environments control AWS deployment. This document covers the GitHub and AWS configuration that cannot be expressed entirely in workflow files.
 
-## Pipeline contracts
+## Pipeline stages
 
-| Stage | Evidence produced | Blocking behavior |
+| Stage | Output | When it blocks |
 | --- | --- | --- |
-| Python matrix | JUnit result, 85% coverage threshold, coverage XML | Required |
-| Static analysis | Ruff, Mypy, blocking Bandit report | Required |
-| Supply chain | CodeQL, dependency review, pip-audit, OpenSSF Scorecard | Required |
-| Package | Linux/Python 3.11 Lambda ZIP, import smoke test, SHA-256 | Required |
-| Infrastructure | Local and AWS Terraform format/validation | Required |
-| Integration | Terraform-applied LocalStack and asynchronous E2E tests | Required |
-| Release | Conventional version, release assets, SBOM and signed attestations | Main only, after all gates |
-| Deployment | Saved plan, GitHub deployment record, API smoke response | Protected environment |
-| Performance | Raw telemetry, baseline comparison, incident and Pages history | Scheduled/manual gate |
+| Python matrix | JUnit results, coverage XML, and an 85% coverage check | Pull request and main verification |
+| Static analysis | Ruff, Mypy, and Bandit results | Pull request and main verification |
+| Supply chain | CodeQL, dependency review, pip-audit, and OpenSSF Scorecard results | According to event and repository capability |
+| Package | Linux/Python 3.11 Lambda ZIP, import smoke test, and SHA-256 digest | Before release or deployment |
+| Infrastructure | Terraform format and configuration validation | Pull request and main verification |
+| Integration | Terraform-applied LocalStack and asynchronous flow tests | Pull request and main verification |
+| Release | Conventional version, release assets, SBOM, and provenance | Releasable main-branch changes |
+| Deployment | Saved plan, GitHub deployment record, and API smoke response | Selected protected environment |
+| Performance | Raw result, baseline comparison, issue state, and Pages history | Scheduled or manual run |
 
-All external actions are pinned to immutable full commit SHAs. Dependabot proposes grouped updates for Actions, Python, Terraform, and Docker Compose.
+External actions are pinned to full commit SHAs. Dependabot proposes grouped updates for Actions, Python, Terraform, and Docker Compose; pinned references still require periodic review and updating.
+
+Some jobs are intentionally conditional. For example, OpenSSF Scorecard runs on its supported main-branch, scheduled, or manual contexts rather than every pull-request event. A skipped conditional job is different from a failed required gate, so branch protection should require the aggregate `Required Quality Gate` defined by the primary workflow.
 
 ## One-time AWS bootstrap
 
-The bootstrap is intentionally separate because it creates the trust and state used by subsequent Terraform runs. Run it once with an administrator identity:
+The bootstrap creates the OIDC trust relationship and remote Terraform state used by later deployments. Run it once with an authorized administrator identity:
 
 ```bash
 terraform -chdir=infra/terraform/bootstrap init
@@ -36,7 +38,7 @@ terraform -chdir=infra/terraform/bootstrap import \
   arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com
 ```
 
-The trust policy only accepts tokens issued for this repository's `dev` or `production` GitHub environments. Record the two Terraform outputs.
+The trust policy limits tokens to this repository's `dev` and `production` GitHub environments. Review the generated IAM plan against the target account's policies and retain the role ARN and state-bucket outputs.
 
 ## GitHub configuration
 
@@ -46,54 +48,55 @@ Create `dev` and `production` environments. Add these environment variables to b
 | --- | --- |
 | `AWS_ROLE_ARN` | `aws_role_arn` bootstrap output |
 | `TF_STATE_BUCKET` | `terraform_state_bucket` bootstrap output |
-| `AWS_REGION` | Deployment region, normally `us-east-1` |
+| `AWS_REGION` | Target deployment region, such as `us-east-1` |
 
-For `production`, enable required reviewers, prevent self-review, and restrict deployments to `main` or release tags. Enable GitHub Pages with **GitHub Actions** as its source.
+For `production`, enable required reviewers, prevent self-review, and restrict deployments to `main` or approved release tags. Enable GitHub Pages with **GitHub Actions** as its source if the performance history site is required.
 
-In **Settings > Code security**, enable Dependency Graph. The PR dependency and license gate requires it. Until it is enabled, the workflow emits an explicit warning and continues to enforce the blocking `pip-audit` lockfile scan instead of failing for unavailable repository metadata.
+In **Settings > Code security**, enable Dependency Graph. The pull-request dependency and license check uses that repository metadata. The lockfile `pip-audit` scan remains the package vulnerability gate when dependency-review metadata is unavailable.
 
 Configure a `main` ruleset with:
 
 - pull requests and conversation resolution required;
 - code-owner review for `.github/` and `infra/`;
 - `Required Quality Gate` as a required status check;
-- merge queue enabled—the pipeline supports the `merge_group` event;
+- merge queue enabled if the repository uses it;
 - force pushes and branch deletion blocked;
-- signed commits and linear history if they match the repository contribution model.
+- signed commits and linear history if required by the team contribution model.
 
-In Actions settings, keep the default `GITHUB_TOKEN` read-only and require actions to be pinned to full SHAs.
+Keep the default `GITHUB_TOKEN` read-only in Actions settings. Individual jobs request only the additional permissions they need.
 
 ## Release policy
 
-Only conventional commits create releases:
+The release workflow interprets conventional commits as follows:
 
-- `fix:`, `perf:`, and `refactor:` create a patch release;
-- `feat:` creates a minor release;
-- `!` or `BREAKING CHANGE:` creates a major release;
-- documentation and maintenance-only commits produce no release.
+- `fix:`, `perf:`, and `refactor:` increment the patch version;
+- `feat:` increments the minor version;
+- `!` or `BREAKING CHANGE:` increments the major version;
+- documentation and maintenance-only commits do not create a release.
 
-The release contains `lambda-package.zip` and `sbom.cdx.json`. Verify provenance locally with:
+The release contains `lambda-package.zip` and `sbom.cdx.json`. Verify GitHub provenance after downloading an artifact:
 
 ```bash
 gh attestation verify lambda-package.zip \
   --repo AAAmer91/event-mesh-cloud-platform
 ```
 
+An attestation links an artifact to its workflow identity and source context. It does not establish that the source code is free of defects.
+
 ## Promotion and rollback
 
-After a releasable main build, the tested artifact is deployed to `dev`. Production waits at its protected environment approval. Both use the same GitHub Release tag and ZIP digest.
+After a releasable main build, the tested ZIP is deployed to `dev`. Production waits for its protected-environment approval. Both environments use the same GitHub Release asset and verify its digest before deployment.
 
-The deployment applies a saved Terraform plan, sends a valid order to the deployed API, and expects HTTP 201. A failed smoke test downloads the prior GitHub Release asset and reapplies Terraform before failing the deployment visibly.
+The deployment applies a saved Terraform plan, sends a valid order to the API, and expects HTTP 201. If the smoke test fails, the workflow attempts to obtain the previous GitHub Release asset and reapply the earlier version before reporting failure. Operators must still confirm service recovery and investigate state or schema changes that an artifact rollback cannot reverse.
 
-For a manual promotion or rollback, run **Reusable AWS Deployment** and choose the environment plus any existing release tag. GitHub records the operation against the selected environment.
+For a manual promotion or rollback, run **Reusable AWS Deployment** and select an environment plus an existing release tag. GitHub records the job against that environment.
 
-## Performance operations
+## Performance history
 
-The scheduled workflow restores the latest successful `performance-history` artifact, compares throughput and p99 latency with the previous baseline, and enforces absolute availability/resilience SLAs. It then:
+The scheduled workflow restores the latest successful `performance-history` artifact, compares throughput and p99 latency with the previous baseline, and evaluates the configured availability and resilience thresholds. It then uploads the current result, renders the Pages history, and opens, updates, or closes a labeled regression issue based on the outcome.
 
-1. uploads 90-day raw evidence;
-2. publishes the trend dashboard through GitHub Pages;
-3. opens or updates a labeled regression issue on failure;
-4. comments on and closes the incident after recovery.
+A missing or invalid result is treated as `NO DATA` and fails the gate. The benchmark is useful for detecting regressions in the controlled LocalStack runner environment; it is not an AWS capacity or production load test.
 
-No result file means `NO DATA` and a failed gate—it can never render as a successful empty run.
+## Operational boundaries
+
+Repository automation does not configure organization-wide runner policy, AWS account vending, centralized log retention, cost controls, production alert routing, or Terraform state recovery. Those controls remain responsibilities of the platform and operations teams adopting this pattern.

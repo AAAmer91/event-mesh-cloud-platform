@@ -1,27 +1,17 @@
 # Security Policy
 
-The `event-mesh-cloud-platform` project takes cloud infrastructure and application security seriously.
+## Supported scope
 
----
+This proof of concept does not maintain parallel supported release lines. Security fixes are applied to the latest release and the `main` branch.
 
-## 🔒 Supported Versions
+## Reporting a vulnerability
 
-| Version | Supported |
-| :--- | :---: |
-| `v1.x` | ✅ Yes |
-| `< 1.0` | ❌ No |
+Report suspected vulnerabilities privately through GitHub Security Advisories:
 
----
+1. Open the repository's **Security** tab.
+2. Select **Advisories** and **Report a vulnerability**.
+3. Include the affected component, reproduction steps, potential impact, and any known workaround.
 
-## 🛡️ Reporting a Vulnerability
+Do not disclose an unresolved vulnerability through a public issue or pull request. Reports involving IAM escalation, credential exposure, unsafe deserialization, artifact provenance, or infrastructure policy are within scope.
 
-If you discover a potential security vulnerability (e.g., IAM permission escalation, unhandled credential leakage, or insecure deserialization):
-
-1. **Do NOT report security vulnerabilities via public GitHub issues.**
-2. Please report findings privately via email to: **`a.a.amer91@gmail.com`**.
-3. Include the following details:
-   - Type of vulnerability.
-   - Step-by-step reproduction guide or proof-of-concept.
-   - Potential impact on cloud workloads.
-
-We will acknowledge receipt within 48 hours and work on a coordinated fix.
+An initial acknowledgement is targeted within three business days. Remediation timing depends on impact, reproducibility, and the affected dependency or service.

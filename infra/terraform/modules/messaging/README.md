@@ -1,35 +1,37 @@
-# 📨 Messaging Terraform Module
+# Messaging Module
 
-Provisions an asynchronous, high-throughput event mesh fanout using **Amazon SNS** and **Amazon SQS** with redrive policies and Dead-Letter Queue (DLQ) support.
+This module creates the SNS-to-SQS fanout used by the order flow. One published order event is delivered to an order-processing queue and a notification queue. Persistent order-processing failures are redirected to a dead-letter queue.
 
----
+## Resources and behavior
 
-## 🏗️ Architecture
-- **SNS Topic:** `order-events-topic` (Event bus).
-- **Primary Queue:** `order-events-queue` (with 10-second long polling and SQS redrive policy).
-- **Secondary Queue:** `notification-events-queue` (subscribes to order topic for fanout).
-- **Dead Letter Queue (DLQ):** `order-events-dlq` (quarantines messages failing 3 deliveries).
+- `${prefix}-order-events-topic` is the SNS distribution point.
+- `${prefix}-order-events-queue` uses 10-second long polling and the configured redrive policy.
+- `${prefix}-notification-events-queue` receives a separate fanout copy; its consumer is outside this repository's current scope.
+- `${prefix}-order-events-dlq` retains order messages that exceeded `max_receive_count`.
+- Queue policies allow `sqs:SendMessage` only when the source ARN is the module's topic.
 
----
+SNS and SQS provide at-least-once delivery. Consumers must tolerate duplicate messages, and DLQ messages require an operational review and replay policy.
 
-## 📥 Inputs
+## Inputs
 
 | Name | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `prefix` | `string` | `"event-mesh"` | Resource name prefix. |
-| `max_receive_count` | `number` | `3` | Maximum receive attempts before sending to DLQ. |
-| `visibility_timeout_seconds` | `number` | `30` | Queue visibility timeout in seconds. |
-| `message_retention_seconds` | `number` | `345600` | Retention duration for standard queue (4 days). |
-| `dlq_message_retention_seconds` | `number` | `1209600` | Retention duration for DLQ (14 days). |
-| `tags` | `map(string)` | `{}` | Key-value tags. |
+| --- | --- | --- | --- |
+| `prefix` | `string` | `"event-mesh"` | Resource-name prefix |
+| `max_receive_count` | `number` | `3` | Deliveries allowed before redrive to the DLQ |
+| `visibility_timeout_seconds` | `number` | `30` | Period in which an in-flight order message is hidden |
+| `message_retention_seconds` | `number` | `345600` | Primary and notification queue retention; four days |
+| `dlq_message_retention_seconds` | `number` | `1209600` | DLQ retention; fourteen days |
+| `tags` | `map(string)` | `{}` | Tags merged into resources |
 
----
-
-## 📤 Outputs
+## Outputs
 
 | Name | Description |
-| :--- | :--- |
-| `sns_topic_arn` | ARN of the SNS topic. |
-| `order_queue_arn` / `order_queue_url` | ARN and URL of the primary order processing queue. |
-| `notification_queue_arn` / `notification_queue_url` | ARN and URL of the notifications queue. |
-| `dlq_arn` / `dlq_url` | ARN and URL of the Dead Letter Queue. |
+| --- | --- |
+| `sns_topic_arn` / `sns_topic_name` | Order topic identifiers |
+| `order_queue_arn` / `order_queue_url` / `order_queue_name` | Order queue identifiers |
+| `notification_queue_arn` / `notification_queue_url` | Notification queue identifiers |
+| `dlq_arn` / `dlq_url` / `dlq_name` | Dead-letter queue identifiers |
+
+## Operating notes
+
+The visibility timeout must remain longer than expected processing time, including retry behavior. Retention and receive-count defaults are evaluation settings and should be selected from recovery objectives, message volume, and the team's ability to respond to DLQ alarms.
