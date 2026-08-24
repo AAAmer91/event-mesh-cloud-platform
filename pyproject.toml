@@ -20,7 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "boto3==1.43.10",
+    "boto3==1.43.72",
     "pydantic==2.13.4",
 ]
 
