@@ -20,8 +20,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "boto3==1.43.10",
-    "pydantic==2.13.4",
+    "boto3==1.43.83",
+    "pydantic==2.13.5",
 ]
 
 [project.optional-dependencies]
